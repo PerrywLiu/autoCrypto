@@ -1,0 +1,31 @@
+# 实盘交易配置 — 双策略并行
+
+exchange:
+  market_type: "swap"           # 永续合约
+  testnet: true                 # true=模拟盘, false=实盘
+
+strategy:
+  name: "dual"                  # 双策略: 趋势+费率套利
+  symbol: "BTC/USDT"
+  timeframe: "4h"
+
+# 策略 A: 趋势跟踪
+trend:
+  risk_per_trade: 0.02          # 单笔风险 2%
+  leverage: 3                   # 杠杆
+  allocation: 0.3               # 30% 资金
+
+# 策略 B: 资金费率套利
+funding_arb:
+  leverage: 5                   # 杠杆 (delta中性, 可稍高)
+  allocation: 0.4               # 40% 资金
+
+risk:
+  initial_capital: 500          # 初始资金 (USDT)
+  max_daily_loss_pct: 0.05      # 日亏损熔断 5%
+  max_positions: 1              # 趋势策略最大持仓
+
+notification:
+  telegram_enabled: false
+  telegram_bot_token: ""
+  telegram_chat_id: ""

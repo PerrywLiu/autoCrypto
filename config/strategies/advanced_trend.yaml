@@ -1,0 +1,39 @@
+# 进阶趋势跟踪 v10 — 当前最优配置
+#
+# 回测结果 (BTC/USDT 1H, 2024-09 ~ 2025-02):
+#   Trailing Stop: +5.97%, 胜率 41.6%, 回撤 -12.81%, 113笔
+#   固定止盈 1.5x: +61.6%胜率, 做多64%/做空59%
+#   固定止盈 3.0x: +9.12%, 胜率 45.7%, 回撤 -14.66%
+
+strategy:
+  name: "Advanced Trend v10"
+  description: >
+    EMA(20/50/100) + ADX非对称 + 评分制 + 反弹确认 + Trailing Stop
+
+params:
+  ema_fast: 20
+  ema_mid: 50
+  ema_slow: 100
+
+  adx_period: 14
+  adx_long: 15       # 做多 ADX 门槛
+  adx_short: 18      # 做空更高门槛
+
+  atr_period: 14
+  atr_stop_mult: 2.5   # Trailing Stop 倍数
+  atr_entry_mult: 0.8  # 回调距 EMA 阈值
+
+  use_fixed_tp: false   # 固定止盈开关 (true=TP, false=TrailingStop)
+  tp_mult: 2.0          # 固定止盈倍数 (仅 use_fixed_tp=true 时生效)
+
+  min_score_long: 6     # 做多评分门槛 (满分9, 6=67%)
+  min_score_short: 7    # 做空评分门槛 (满分10, 7=70%)
+
+  rsi_period: 14
+  rsi_long_min: 42
+  rsi_short_max: 48
+
+  cooldown_bars: 3
+
+risk:
+  risk_per_trade: 0.02

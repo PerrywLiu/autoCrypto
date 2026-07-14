@@ -1,0 +1,22 @@
+# Donchian 突破策略参数（海龟交易法变体）
+# 参考 okx-ai-quant/src/okx_ai_quant/strategy.py DonchianBreakoutStrategy
+
+strategy:
+  name: "Donchian Breakout"
+  description: "Donchian 通道突破 + 4H EMA 趋势过滤器 + ATR 止损"
+
+params:
+  # Donchian 通道参数
+  donchian_period: 20       # 通道周期（经典海龟使用20日）
+  # 趋势过滤器
+  ema_fast: 12              # 4H 快线
+  ema_slow: 26              # 4H 慢线
+  # ATR 参数
+  atr_period: 14
+  atr_stop_mult: 1.0        # 止损距离（ATR倍数）
+  atr_tp_mult: 1.5          # 止盈距离（ATR倍数）
+  # 过滤器
+  min_expected_move: 0.005
+
+risk:
+  risk_per_trade: 0.02

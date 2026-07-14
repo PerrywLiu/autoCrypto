@@ -1,0 +1,40 @@
+# EMA-RSI-ATR 趋势跟踪策略参数 (v5 极保守版 - 当前最优)
+
+strategy:
+  name: "EMA-RSI-ATR v5"
+  description: >
+    经过5轮参数优化的保守型配置，大幅降低交易频率和回撤。
+
+params:
+  # 均线参数
+  ema_fast: 12
+  ema_slow: 26
+
+  # RSI 区间过滤
+  rsi_period: 14
+  rsi_long_min: 45.0
+  rsi_long_max: 70.0
+  rsi_short_min: 30.0
+  rsi_short_max: 55.0
+
+  # ATR 止损止盈 (宽止损 + 高盈亏比)
+  atr_period: 14
+  atr_stop_mult: 2.0         # 更宽的止损
+  atr_tp_mult: 4.0           # 更高的盈亏比 (1:2)
+
+  # 趋势强度
+  trend_gap_min: 0.002
+
+  # 置信度
+  rsi_weight: 0.3
+  volatility_weight: 0.2
+  base_confidence: 0.5
+  confidence_threshold: 0.60   # 高置信度门槛
+  min_expected_move: 0.01      # 至少 1% 期望波动
+
+  # 交易管理
+  cooldown_bars: 12            # 半天冷却期
+  min_hold_bars: 8             # 至少持有 8 根 K 线
+
+risk:
+  risk_per_trade: 0.02

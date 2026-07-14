@@ -1,0 +1,33 @@
+# 全局回测配置
+
+data:
+  # 数据存储根目录
+  raw_dir: "data/raw"
+  # OKX 交易所标识
+  exchange: "okx"
+  # 默认交易对
+  default_symbol: "BTC/USDT"
+  # 默认时间框架
+  default_timeframe: "1h"
+
+backtest:
+  # 初始资金（USDT）
+  initial_cash: 10000
+  # 手续费率（OKX现货 taker 费率）
+  commission: 0.001
+  # 是否允许做空
+  short_enabled: true
+
+risk:
+  # 单笔交易风险比例
+  risk_per_trade: 0.02
+  # 最大持仓K线数（None为不限）
+  max_hold_bars: null
+  # 连续亏损后暂停交易次数
+  max_consecutive_losses: 5
+
+output:
+  # 报告输出目录
+  report_dir: "outputs/reports"
+  # 图表输出目录
+  chart_dir: "outputs/charts"

@@ -1,0 +1,29 @@
+# 多时间框架趋势策略参数
+# 参考 okx-ai-quant/src/okx_ai_quant/strategy.py MultiTimeframeTrendStrategy
+
+strategy:
+  name: "Multi-Timeframe Trend"
+  description: "1H+4H 双时间框架 EMA 三重排列 + RSI 区间过滤"
+
+params:
+  # 三重均线参数
+  ema_fast: 12        # 快线
+  ema_mid: 26         # 中线
+  ema_slow: 50        # 慢线
+  # 趋势强度过滤
+  trend_gap_min: 0.002   # EMA快慢差距/价格 最小值（0.2%）
+  # RSI 参数
+  rsi_period: 14
+  rsi_long_lower: 45     # 做多 RSI 下限
+  rsi_long_upper: 72     # 做多 RSI 上限
+  rsi_short_lower: 28    # 做空 RSI 下限
+  rsi_short_upper: 55    # 做空 RSI 上限
+  # ATR 参数
+  atr_period: 14
+  atr_stop_mult: 1.2     # 趋势越强，止损可以稍宽
+  atr_tp_mult: 2.0       # 趋势越强，止盈空间越大
+  # 过滤器
+  min_expected_move: 0.005
+
+risk:
+  risk_per_trade: 0.02

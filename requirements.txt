@@ -1,0 +1,28 @@
+# 回测引擎
+backtesting>=0.3.3
+
+# 交易所API
+ccxt>=4.4.0
+
+# 技术指标
+pandas-ta>=0.3.14b
+
+# 数据处理
+pandas>=2.2.0
+numpy>=1.26.0
+pyarrow>=16.0.0
+
+# 可视化
+plotly>=5.22.0
+
+# 配置管理
+pyyaml>=6.0
+
+# 性能指标
+empyrical-reloaded>=0.5.10
+
+# 日志
+loguru>=0.7.0
+
+# 工具
+python-dotenv>=1.0.0

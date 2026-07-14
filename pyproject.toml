@@ -1,0 +1,13 @@
+[project]
+name = "autocrypto"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.12"
+dependencies = [
+    "backtesting>=0.6.5",
+    "ccxt>=4.5.63",
+    "loguru>=0.7.3",
+    "pandas-ta>=0.4.71b0",
+    "plotly>=6.8.0",
+    "python-dotenv>=1.2.2",
+]
