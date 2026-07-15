@@ -1,0 +1,37 @@
+# TripleEma 4h 2x 杠杆 实盘配置
+# 使用: python scripts/run_production.py --config config/production.yaml
+
+symbol: "BTC/USDT"          # 交易对
+timeframe: "4h"              # K线周期
+market_type: "swap"          # 永续合约
+
+strategy:
+  name: "triple_ema"
+  ema_fast: 10
+  ema_mid: 20
+  ema_slow: 50
+  ema_trend: 200
+  adx_period: 14
+  adx_threshold: 20
+  atr_period: 14
+  sl_atr_mult: 1.5           # 止损 = 入场价 ± 1.5×ATR
+  tp_atr_mult: 3.0           # 止盈 = 入场价 ± 3×ATR
+  cooldown_base: 6            # 基础冷却期 (4h K线数)
+  cooldown_extra_per_loss: 3  # 每次亏损额外冷却
+
+risk:
+  initial_capital: 500        # 初始保证金 USDT
+  leverage: 2                 # 杠杆倍数
+  risk_per_trade: 0.02        # 单笔风险 2%
+  max_daily_loss_pct: 0.05    # 日熔断 5%
+  max_consecutive_losses: 5   # 连续亏损暂停
+
+mode:
+  dry_run: true               # 纸上交易模式 (只看不下单)
+  testnet: true               # 使用 OKX 模拟盘
+  log_level: "INFO"           # DEBUG / INFO / WARNING
+  heartbeat_minutes: 15       # 巡检间隔 (分钟)
+
+output:
+  trade_log: "outputs/production_trades.json"
+  log_file: "outputs/production.log"
