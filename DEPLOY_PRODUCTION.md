@@ -4,32 +4,93 @@
 
 ---
 
-## 1. 环境准备
+## 1. 快速开始：Docker 部署（推荐）
 
-### 1.1 系统要求
+Docker 保证环境一致，换了服务器也能一行命令跑起来。
+
+### 1.1 安装 Docker
+
+```bash
+# Ubuntu/Debian
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER  # 免 sudo
+newgrp docker
+```
+
+### 1.2 拉项目 + 配密钥
+
+```bash
+git clone <repo-url> autoCrypto && cd autoCrypto
+git checkout btc-daily-3x
+
+# 配 OKX API 密钥
+cat > .env << 'EOF'
+OKX_API_KEY=你的API_Key
+OKX_SECRET=你的Secret
+OKX_PASSPHRASE=你的Passphrase
+EOF
+chmod 600 .env
+```
+
+### 1.3 启动
+
+```bash
+# 构建镜像 + 后台启动
+docker compose up -d
+
+# 查看日志
+docker compose logs -f
+
+# 停止
+docker compose down
+```
+
+### 1.4 切换模式
+
+编辑 `docker-compose.yml` 的 `command` 行：
+
+```yaml
+# 纸上交易（默认，安全起步）
+command: ["uv", "run", "python", "scripts/run_production.py", "--dry-run"]
+
+# 模拟盘
+command: ["uv", "run", "python", "scripts/run_production.py"]
+
+# ⚠️ 实盘
+command: ["uv", "run", "python", "scripts/run_production.py", "--live"]
+```
+
+改完重启：
+```bash
+docker compose down && docker compose up -d
+```
+
+---
+
+## 1-alt. 手动部署（不用 Docker）
+
+<details>
+<summary>点击展开</summary>
+
+### 系统要求
 
 | 项目 | 最低 | 推荐 |
 |------|------|------|
 | 操作系统 | Linux / macOS | Ubuntu 22.04+ |
 | Python | 3.12+ | 3.12 |
 | 内存 | 256MB | 512MB |
-| 磁盘 | 100MB | 500MB |
-| 网络 | 稳定互联网 | 延迟 <100ms |
 
-### 1.2 安装
+### 安装
 
 ```bash
-# 克隆项目
 git clone <repo-url> autoCrypto && cd autoCrypto
-
-# 切换到生产分支
 git checkout btc-daily-3x
-
-# 安装 Python 依赖
 curl -LsSf https://astral.sh/uv/install.sh | sh
 source ~/.cargo/env
 uv sync
 ```
+
+</details>
 
 ---
 
@@ -184,7 +245,19 @@ uv run python scripts/run_production.py --live
 
 ## 5. 后台运行
 
-### 5.1 systemd（推荐生产环境）
+### 5.1 Docker Compose（推荐）
+
+`docker-compose.yml` 已内置 `restart: unless-stopped`，崩溃/重启都会自动拉起。
+
+```bash
+docker compose up -d        # 后台启动
+docker compose logs -f      # 实时日志
+docker compose restart      # 重启
+docker compose down         # 停止
+docker compose pull && docker compose up -d --build  # 更新镜像
+```
+
+### 5.2 systemd（手动部署用）
 
 ```bash
 sudo cat > /etc/systemd/system/autocrypto.service << 'EOF'
@@ -243,17 +316,17 @@ kill $(cat bot.pid)
 ### 6.1 日常检查
 
 ```bash
-# 机器人是否在运行
-ps aux | grep run_production
+# Docker 方式
+docker compose ps                    # 容器状态
+docker compose logs --tail=30        # 最近30行日志
+docker compose logs | grep "平仓"    # 查看交易记录
+docker compose logs | grep "新K线" | tail -3  # 最新K线
 
-# 最近日志
-tail -30 outputs/production.log
-
-# 最近交易
-cat outputs/production_trades.json | python -m json.tool | tail -30
-
-# 最新K线时间（应该每4h更新）
-grep "新K线" outputs/production.log | tail -3
+# 手动部署方式
+ps aux | grep run_production         # 进程状态
+tail -30 outputs/production.log      # 最近日志
+grep "平仓" outputs/production.log   # 交易记录
+grep "新K线" outputs/production.log | tail -3  # 最新K线
 ```
 
 ### 6.2 收益查看

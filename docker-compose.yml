@@ -1,0 +1,28 @@
+# autoCrypto 生产部署
+# 用法: docker compose up -d
+
+services:
+  bot:
+    build: .
+    container_name: autocrypto
+    restart: unless-stopped    # 崩溃自动重启
+    environment:
+      - TZ=UTC                 # OKX 使用 UTC 时间
+    env_file:
+      - .env                   # API 密钥
+    volumes:
+      - ./outputs:/app/outputs # 持久化日志和交易记录
+      - ./config:/app/config:ro  # 配置文件只读
+    # 默认纸上交易（安全起步），实盘需改为:
+    # command: ["uv", "run", "python", "scripts/run_production.py"]
+    command: ["uv", "run", "python", "scripts/run_production.py", "--dry-run"]
+    # 资源限制
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
