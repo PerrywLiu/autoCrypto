@@ -89,7 +89,7 @@ def _lowest(a, w):
 # ═══════════════════════════════════════════
 
 class BaseBtcStrategy(Strategy):
-    """BTC策略基类：200EMA市场状态 + 冷却期 + 动态止损"""
+    """BTC策略基类：200EMA市场状态 + 冷却期 + 动态止损 + 杠杆"""
     ema_trend = 200       # 长期趋势EMA
     adx_period = 14
     adx_min = 20          # ADX最低阈值
@@ -98,6 +98,7 @@ class BaseBtcStrategy(Strategy):
     atr_tp_mult = 3.0     # 止盈 ATR倍数
     cooldown_base = 3     # 基础冷却期(根K线)
     cooldown_per_loss = 2 # 每次亏损额外冷却
+    leverage = 3           # 杠杆倍数 (1=现货, 3=3x)
 
     def _init_base(self):
         """子类在 init() 中调用此方法"""
@@ -136,18 +137,23 @@ class BaseBtcStrategy(Strategy):
         self._last_trade_bar = len(self.data)
 
     def _buy_with_stops(self):
-        """带ATR止损止盈的做多"""
+        """带ATR止损止盈的做多（含杠杆）"""
         c = self.data.Close[-1]; atr_v = self.atr[-1]
-        sl = c - atr_v * self.atr_sl_mult
-        tp = c + atr_v * self.atr_tp_mult
-        self.buy(sl=sl, tp=tp)
+        # 杠杆越高，止损越紧（同比例缩小ATR倍数以控制风险）
+        sl_adj = self.atr_sl_mult / self.leverage
+        tp_adj = self.atr_tp_mult / self.leverage
+        sl = c - atr_v * max(sl_adj, 0.3)
+        tp = c + atr_v * max(tp_adj, 0.5)
+        self.buy(size=self.leverage, sl=sl, tp=tp)
 
     def _sell_with_stops(self):
-        """带ATR止损止盈的做空"""
+        """带ATR止损止盈的做空（含杠杆）"""
         c = self.data.Close[-1]; atr_v = self.atr[-1]
-        sl = c + atr_v * self.atr_sl_mult
-        tp = c - atr_v * self.atr_tp_mult
-        self.sell(sl=sl, tp=tp)
+        sl_adj = self.atr_sl_mult / self.leverage
+        tp_adj = self.atr_tp_mult / self.leverage
+        sl = c + atr_v * max(sl_adj, 0.3)
+        tp = c - atr_v * max(tp_adj, 0.5)
+        self.sell(size=self.leverage, sl=sl, tp=tp)
 
 
 # ═══════════════════════════════════════════
