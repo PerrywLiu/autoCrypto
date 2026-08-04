@@ -1,7 +1,13 @@
 import unittest
 
+import pandas as pd
 import yaml
 
+from scripts.backtest_online import (
+    compute_buy_hold_equity,
+    compute_equity_metrics,
+    compute_monthly_stats,
+)
 from src.live.production_bot import ProductionBot, _normalize_strategy_config
 from src.live.risk import calculate_position_size, loss_pause_decision
 
@@ -123,6 +129,47 @@ class ProductionConfigTests(unittest.TestCase):
             bot.p_cooldown_extra_per_loss,
             cfg["strategy"]["cooldown_extra_per_loss"],
         )
+        self.assertEqual(
+            bot.p_ema_slope_lookback,
+            cfg["strategy"]["ema_slope_lookback"],
+        )
+        self.assertEqual(bot.p_min_ema_spread, cfg["strategy"]["min_ema_spread"])
+        self.assertEqual(
+            bot.p_min_atr_percentile,
+            cfg["strategy"]["min_atr_percentile"],
+        )
+
+
+class BacktestOnlineMetricTests(unittest.TestCase):
+    def test_buy_hold_equity_and_metrics_include_drawdown(self):
+        df = pd.DataFrame({
+            "timestamp": pd.date_range("2024-01-01", periods=4, freq="4h", tz="utc"),
+            "Close": [100.0, 120.0, 90.0, 150.0],
+        })
+
+        equity = compute_buy_hold_equity(df, initial=1000)
+        metrics = compute_equity_metrics(equity, periods_per_year=365 * 6)
+
+        self.assertAlmostEqual(equity.iloc[-1], 1500)
+        self.assertAlmostEqual(metrics["return"], 0.5)
+        self.assertAlmostEqual(metrics["max_drawdown"], -0.25)
+        self.assertGreater(metrics["calmar"], 0)
+
+    def test_monthly_stats_report_win_rate_and_worst_month(self):
+        equity = pd.Series(
+            [100.0, 110.0, 99.0, 120.0],
+            index=pd.to_datetime([
+                "2024-01-01",
+                "2024-01-31",
+                "2024-02-29",
+                "2024-03-31",
+            ], utc=True),
+        )
+
+        stats = compute_monthly_stats(equity)
+
+        self.assertAlmostEqual(stats["monthly_win_rate"], 0.5)
+        self.assertAlmostEqual(stats["worst_month"], -0.1)
 
 
 if __name__ == "__main__":

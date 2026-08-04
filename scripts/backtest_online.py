@@ -48,13 +48,30 @@ def calculate_indicators(df: pd.DataFrame, strategy: dict) -> dict[str, np.ndarr
     close = df["Close"].to_numpy(dtype=float)
     high = df["High"].to_numpy(dtype=float)
     low = df["Low"].to_numpy(dtype=float)
+    atr_values = atr(high, low, close, strategy.get("atr_period", 14))
+    atr_pct = np.divide(
+        atr_values,
+        close,
+        out=np.full(len(close), np.nan, dtype=float),
+        where=close != 0,
+    )
+    min_atr_percentile = float(strategy.get("min_atr_percentile", 0) or 0)
+    atr_percentile_threshold = np.full(len(close), np.nan, dtype=float)
+    if min_atr_percentile > 0:
+        window = int(strategy.get("atr_percentile_window", 180) or 180)
+        atr_pct_series = pd.Series(atr_pct)
+        atr_percentile_threshold = atr_pct_series.rolling(window).quantile(
+            min_atr_percentile / 100
+        ).shift(1).to_numpy(dtype=float)
     return {
         "ema10": ema(close, strategy.get("ema_fast", 10)),
         "ema20": ema(close, strategy.get("ema_mid", 20)),
         "ema50": ema(close, strategy.get("ema_slow", 50)),
         "ema200": ema(close, strategy.get("ema_trend", 200)),
         "adx": adx(high, low, close, strategy.get("adx_period", 14)),
-        "atr": atr(high, low, close, strategy.get("atr_period", 14)),
+        "atr": atr_values,
+        "atr_pct": atr_pct,
+        "atr_percentile_threshold": atr_percentile_threshold,
     }
 
 
@@ -77,19 +94,41 @@ def evaluate_signal(row, ind: dict[str, np.ndarray], i: int, strategy: dict) -> 
     bear_align = ind["ema10"][i] < ind["ema20"][i] < ind["ema50"][i]
     near_ema20 = abs(close - ind["ema20"][i]) < ind["atr"][i]
     strong = ind["adx"][i] > strategy.get("adx_threshold", 20)
-    if not (strong and near_ema20):
+    ema_slope_lookback = int(strategy.get("ema_slope_lookback", 0) or 0)
+    if ema_slope_lookback > 0:
+        if i < ema_slope_lookback or np.isnan(ind["ema20"][i - ema_slope_lookback]):
+            return None
+        bull_slope = ind["ema20"][i] > ind["ema20"][i - ema_slope_lookback]
+        bear_slope = ind["ema20"][i] < ind["ema20"][i - ema_slope_lookback]
+    else:
+        bull_slope = True
+        bear_slope = True
+
+    min_ema_spread = float(strategy.get("min_ema_spread", 0.0) or 0.0)
+    ema_spread = abs(ind["ema10"][i] - ind["ema50"][i]) / close
+    spread_ok = ema_spread >= min_ema_spread
+
+    min_atr_percentile = float(strategy.get("min_atr_percentile", 0) or 0)
+    atr_ok = True
+    if min_atr_percentile > 0:
+        threshold = ind["atr_percentile_threshold"][i]
+        if np.isnan(threshold):
+            return None
+        atr_ok = ind["atr_pct"][i] >= threshold
+
+    if not (strong and near_ema20 and spread_ok and atr_ok):
         return None
 
     sl_mult = strategy.get("sl_atr_mult", 1.5)
     tp_mult = strategy.get("tp_atr_mult", 3.0)
-    if bull and bull_align:
+    if bull and bull_align and bull_slope:
         return {
             "side": "long",
             "entry": close,
             "sl": close - ind["atr"][i] * sl_mult,
             "tp": close + ind["atr"][i] * tp_mult,
         }
-    if (not bull) and bear_align:
+    if (not bull) and bear_align and bear_slope:
         return {
             "side": "short",
             "entry": close,
@@ -129,8 +168,68 @@ def unrealized_equity(balance: float, position: dict | None, close: float) -> fl
     return balance + position["notional"] * (position["entry"] / close - 1)
 
 
-def replay(df: pd.DataFrame, cfg: dict) -> tuple[dict, pd.DataFrame]:
-    strategy = cfg["strategy"]
+def _max_drawdown(equity: pd.Series) -> float:
+    if equity.empty:
+        return 0.0
+    peak = equity.cummax()
+    drawdown = equity / peak - 1
+    return float(drawdown.min())
+
+
+def _cagr(equity: pd.Series, periods_per_year: int) -> float:
+    if len(equity) < 2 or equity.iloc[0] <= 0:
+        return 0.0
+    years = (len(equity) - 1) / periods_per_year
+    if years <= 0:
+        return 0.0
+    return float((equity.iloc[-1] / equity.iloc[0]) ** (1 / years) - 1)
+
+
+def _sharpe(equity: pd.Series, periods_per_year: int) -> float:
+    returns = equity.pct_change().dropna()
+    if len(returns) < 2 or returns.std() <= 0:
+        return 0.0
+    return float(returns.mean() / returns.std() * np.sqrt(periods_per_year))
+
+
+def compute_equity_metrics(equity: pd.Series, periods_per_year: int) -> dict:
+    total_return = float(equity.iloc[-1] / equity.iloc[0] - 1) \
+        if len(equity) > 1 and equity.iloc[0] > 0 else 0.0
+    max_drawdown = _max_drawdown(equity)
+    cagr = _cagr(equity, periods_per_year)
+    return {
+        "return": total_return,
+        "max_drawdown": max_drawdown,
+        "cagr": cagr,
+        "calmar": cagr / abs(max_drawdown) if max_drawdown < 0 else 0.0,
+        "sharpe": _sharpe(equity, periods_per_year),
+    }
+
+
+def compute_monthly_stats(equity: pd.Series) -> dict:
+    if not isinstance(equity.index, pd.DatetimeIndex) or equity.empty:
+        return {"monthly_win_rate": 0.0, "worst_month": 0.0}
+    monthly = equity.resample("ME").last()
+    monthly_returns = monthly.pct_change().dropna()
+    if monthly_returns.empty:
+        return {"monthly_win_rate": 0.0, "worst_month": 0.0}
+    return {
+        "monthly_win_rate": float((monthly_returns > 0).mean()),
+        "worst_month": float(monthly_returns.min()),
+    }
+
+
+def compute_buy_hold_equity(df: pd.DataFrame, initial: float) -> pd.Series:
+    equity = initial * df["Close"] / df["Close"].iloc[0]
+    return pd.Series(equity.to_numpy(), index=df["timestamp"], dtype=float)
+
+
+def replay(
+    df: pd.DataFrame,
+    cfg: dict,
+    strategy_overrides: dict | None = None,
+) -> tuple[dict, pd.DataFrame]:
+    strategy = {**cfg["strategy"], **(strategy_overrides or {})}
     risk = cfg["risk"]
     indicators = calculate_indicators(df, strategy)
 
@@ -154,13 +253,18 @@ def replay(df: pd.DataFrame, cfg: dict) -> tuple[dict, pd.DataFrame]:
     pause_events = 0
     in_pause = False
     equity_curve = []
+    in_market_bars = 0
+    exposure_values = []
 
-    for i, row in df.iterrows():
+    for i, row in enumerate(df.itertuples(index=False)):
         close = float(row.Close)
         equity = unrealized_equity(balance, position, close)
         peak = max(peak, equity)
         max_drawdown = min(max_drawdown, (equity - peak) / peak if peak > 0 else 0.0)
         equity_curve.append(equity)
+        if position:
+            in_market_bars += 1
+            exposure_values.append(position["notional"] / equity if equity > 0 else 0.0)
 
         if position:
             exit_signal = check_exit(row, indicators, i, position)
@@ -252,27 +356,49 @@ def replay(df: pd.DataFrame, cfg: dict) -> tuple[dict, pd.DataFrame]:
     final_equity = equity_curve[-1] if equity_curve else balance
     trades_df = pd.DataFrame(trades)
     wins = int((trades_df["pnl"] > 0).sum()) if not trades_df.empty else 0
-    returns = pd.Series(equity_curve).pct_change().dropna()
-    sharpe = returns.mean() / returns.std() * np.sqrt(365 * 6) \
-        if len(returns) > 1 and returns.std() > 0 else 0.0
-    buy_hold = df["Close"].iloc[-1] / df["Close"].iloc[0] - 1
+    strategy_equity = pd.Series(equity_curve, index=df["timestamp"], dtype=float)
+    buy_hold_equity = compute_buy_hold_equity(df, initial)
+    strategy_metrics = compute_equity_metrics(strategy_equity, 365 * 6)
+    buy_hold_metrics = compute_equity_metrics(buy_hold_equity, 365 * 6)
+    strategy_monthly = compute_monthly_stats(strategy_equity)
+    buy_hold_monthly = compute_monthly_stats(buy_hold_equity)
+
+    gross_pnl = trades_df["gross"].sum() if not trades_df.empty else 0.0
+    total_fee = trades_df["fee"].sum() if not trades_df.empty else 0.0
+    total_funding = trades_df["funding"].sum() if not trades_df.empty else 0.0
+    avg_notional = trades_df["notional"].mean() if not trades_df.empty else 0.0
 
     summary = {
         "start": str(df["timestamp"].iloc[0]),
         "end": str(df["timestamp"].iloc[-1]),
         "initial": initial,
         "final_equity": final_equity,
-        "total_return": final_equity / initial - 1,
-        "max_drawdown": max_drawdown,
-        "sharpe": sharpe,
+        "total_return": strategy_metrics["return"],
+        "max_drawdown": strategy_metrics["max_drawdown"],
+        "strategy_cagr": strategy_metrics["cagr"],
+        "strategy_calmar": strategy_metrics["calmar"],
+        "sharpe": strategy_metrics["sharpe"],
         "trades": len(trades_df),
         "win_rate": wins / len(trades_df) if len(trades_df) else 0.0,
         "capped_orders": capped_orders,
         "pause_events": pause_events,
-        "total_fee": trades_df["fee"].sum() if not trades_df.empty else 0.0,
-        "total_funding": trades_df["funding"].sum() if not trades_df.empty else 0.0,
-        "buy_hold": buy_hold,
-        "excess": final_equity / initial - 1 - buy_hold,
+        "total_fee": total_fee,
+        "total_funding": total_funding,
+        "gross_pnl": gross_pnl,
+        "fee_drag_pct": total_fee / abs(gross_pnl) if gross_pnl != 0 else 0.0,
+        "time_in_market": in_market_bars / len(df) if len(df) else 0.0,
+        "avg_notional": avg_notional,
+        "avg_exposure": float(np.mean(exposure_values)) if exposure_values else 0.0,
+        "strategy_monthly_win_rate": strategy_monthly["monthly_win_rate"],
+        "strategy_worst_month": strategy_monthly["worst_month"],
+        "buy_hold": buy_hold_metrics["return"],
+        "buy_hold_max_drawdown": buy_hold_metrics["max_drawdown"],
+        "buy_hold_cagr": buy_hold_metrics["cagr"],
+        "buy_hold_calmar": buy_hold_metrics["calmar"],
+        "buy_hold_sharpe": buy_hold_metrics["sharpe"],
+        "buy_hold_monthly_win_rate": buy_hold_monthly["monthly_win_rate"],
+        "buy_hold_worst_month": buy_hold_monthly["worst_month"],
+        "excess": strategy_metrics["return"] - buy_hold_metrics["return"],
     }
     return summary, trades_df
 
@@ -301,14 +427,19 @@ def main():
     print(f"  range: {summary['start']} -> {summary['end']}")
     print(f"  return: {summary['total_return']:.2%}")
     print(f"  max_drawdown: {summary['max_drawdown']:.2%}")
+    print(f"  calmar: {summary['strategy_calmar']:.2f}")
     print(f"  sharpe: {summary['sharpe']:.2f}")
     print(f"  trades: {summary['trades']}")
     print(f"  win_rate: {summary['win_rate']:.2%}")
+    print(f"  monthly_win_rate: {summary['strategy_monthly_win_rate']:.2%}")
+    print(f"  time_in_market: {summary['time_in_market']:.2%}")
     print(f"  capped_orders: {summary['capped_orders']}")
     print(f"  pause_events: {summary['pause_events']}")
     print(f"  fee: {summary['total_fee']:.2f}")
     print(f"  funding: {summary['total_funding']:.2f}")
     print(f"  buy_hold: {summary['buy_hold']:.2%}")
+    print(f"  buy_hold_max_drawdown: {summary['buy_hold_max_drawdown']:.2%}")
+    print(f"  buy_hold_calmar: {summary['buy_hold_calmar']:.2f}")
     print(f"  saved: {out}")
 
 

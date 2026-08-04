@@ -13,6 +13,10 @@ strategy:
   ema_trend: 200
   adx_period: 14
   adx_threshold: 20
+  ema_slope_lookback: 3       # EMA20 需保持同向斜率，过滤弱趋势
+  min_ema_spread: 0.003       # EMA10/EMA50 至少拉开 0.3%，过滤粘合震荡
+  min_atr_percentile: 0       # ATR 分位过滤关闭（优化结果不需要）
+  atr_percentile_window: 180  # ATR 分位窗口，启用时使用
   atr_period: 14
   sl_atr_mult: 1.5           # 止损 = 入场价 ± 1.5×ATR
   tp_atr_mult: 3.0           # 止盈 = 入场价 ± 3×ATR

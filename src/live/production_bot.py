@@ -108,6 +108,10 @@ class ProductionBot:
         ema_fast: int = 10, ema_mid: int = 20,
         ema_slow: int = 50, ema_trend: int = 200,
         adx_threshold: int = 20,
+        ema_slope_lookback: int = 0,
+        min_ema_spread: float = 0.0,
+        min_atr_percentile: float = 0.0,
+        atr_percentile_window: int = 180,
         sl_atr: float = 1.5, tp_atr: float = 3.0,
         cooldown_bars: int = 6,
         cooldown_extra_per_loss: int = 3,
@@ -126,6 +130,10 @@ class ProductionBot:
         self.p_ema_f = ema_fast; self.p_ema_m = ema_mid
         self.p_ema_s = ema_slow; self.p_ema_t = ema_trend
         self.p_adx_thr = adx_threshold
+        self.p_ema_slope_lookback = ema_slope_lookback
+        self.p_min_ema_spread = min_ema_spread
+        self.p_min_atr_percentile = min_atr_percentile
+        self.p_atr_percentile_window = atr_percentile_window
         self.p_sl_atr = sl_atr; self.p_tp_atr = tp_atr
         self.p_cooldown = cooldown_bars
         self.p_cooldown_extra_per_loss = cooldown_extra_per_loss
@@ -211,17 +219,48 @@ class ProductionBot:
         near = abs(c - e20) < atr_v            # 价格靠近EMA20
         strong = adx_v > self.p_adx_thr        # 趋势够强
 
+        spread = abs(e10 - e50) / c
+        if spread < self.p_min_ema_spread:
+            return None
+
+        if self.p_min_atr_percentile > 0:
+            window = self.p_atr_percentile_window
+            atr_series = self._indicators["atr"]
+            close_series = self._ohlcv["close"]
+            if len(atr_series) <= window:
+                return None
+            atr_pct = atr_series[-window - 1:-1] / close_series[-window - 1:-1]
+            atr_pct = atr_pct[~np.isnan(atr_pct)]
+            if len(atr_pct) == 0:
+                return None
+            current_atr_pct = atr_v / c
+            if current_atr_pct < np.percentile(atr_pct, self.p_min_atr_percentile):
+                return None
+
         if not strong or not near:
             return None
 
-        if bull and bull_align:
+        if self.p_ema_slope_lookback > 0:
+            lookback = self.p_ema_slope_lookback
+            if len(self._ohlcv["close"]) <= lookback:
+                return None
+            previous_e20 = ind["ema20"][-1 - lookback]
+            if np.isnan(previous_e20):
+                return None
+            bull_slope = e20 > previous_e20
+            bear_slope = e20 < previous_e20
+        else:
+            bull_slope = True
+            bear_slope = True
+
+        if bull and bull_align and bull_slope:
             return {
                 "side": "long",
                 "entry": float(c),
                 "sl": float(c - atr_v * self.p_sl_atr),
                 "tp": float(c + atr_v * self.p_tp_atr),
             }
-        elif not bull and bear_align:
+        elif not bull and bear_align and bear_slope:
             return {
                 "side": "short",
                 "entry": float(c),
