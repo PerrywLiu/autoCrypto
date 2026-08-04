@@ -23,8 +23,10 @@ risk:
   initial_capital: 500        # 初始保证金 USDT
   leverage: 2                 # 杠杆倍数
   risk_per_trade: 0.02        # 单笔风险 2%
+  max_notional_pct: 0.95      # 最大名义仓位 = 可用余额 × 杠杆 × 95%
   max_daily_loss_pct: 0.05    # 日熔断 5%
   max_consecutive_losses: 5   # 连续亏损暂停
+  loss_pause_bars: 18         # 连续亏损后暂停 18 根4h K线(约72小时)再恢复
 
 mode:
   dry_run: true               # 纸上交易模式 (只看不下单)

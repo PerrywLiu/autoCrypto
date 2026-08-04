@@ -15,6 +15,8 @@ import ccxt
 import numpy as np
 from loguru import logger
 
+from src.live.risk import calculate_position_size, loss_pause_decision
+
 
 # ═══════════════════════════════════════════
 # 指标 (纯 NumPy, 与回测完全一致)
@@ -100,12 +102,15 @@ class ProductionBot:
         risk_per_trade: float = 0.02,
         max_daily_loss_pct: float = 0.05,
         max_consecutive_losses: int = 5,
+        loss_pause_bars: int = 18,
+        max_notional_pct: float = 0.95,
         # 策略参数
         ema_fast: int = 10, ema_mid: int = 20,
         ema_slow: int = 50, ema_trend: int = 200,
         adx_threshold: int = 20,
         sl_atr: float = 1.5, tp_atr: float = 3.0,
         cooldown_bars: int = 6,
+        cooldown_extra_per_loss: int = 3,
     ):
         self.symbol = symbol
         self.timeframe = timeframe
@@ -114,6 +119,8 @@ class ProductionBot:
         self.risk_per_trade = risk_per_trade
         self.max_daily_loss_pct = max_daily_loss_pct
         self.max_consecutive_losses = max_consecutive_losses
+        self.loss_pause_bars = loss_pause_bars
+        self.max_notional_pct = max_notional_pct
 
         # 策略参数
         self.p_ema_f = ema_fast; self.p_ema_m = ema_mid
@@ -121,6 +128,7 @@ class ProductionBot:
         self.p_adx_thr = adx_threshold
         self.p_sl_atr = sl_atr; self.p_tp_atr = tp_atr
         self.p_cooldown = cooldown_bars
+        self.p_cooldown_extra_per_loss = cooldown_extra_per_loss
 
         # OKX 连接
         self.exchange = ccxt.okx({
@@ -274,29 +282,46 @@ class ProductionBot:
             logger.warning(f"⛔ 日熔断: PnL={self._daily_pnl:.1f}U")
             return False
 
-        # 连续亏损暂停
-        if self._consecutive_losses >= self.max_consecutive_losses:
-            logger.warning(f"⛔ 连续亏损{self._consecutive_losses}次, 暂停交易")
+        pause = loss_pause_decision(
+            consecutive_losses=self._consecutive_losses,
+            max_consecutive_losses=self.max_consecutive_losses,
+            current_bar=len(self._candles),
+            last_trade_bar=self._last_trade_bar,
+            loss_pause_bars=self.loss_pause_bars,
+        )
+        if not pause.can_trade:
+            logger.warning(
+                f"⛔ 连续亏损{self._consecutive_losses}次, "
+                f"暂停交易剩余{pause.remaining_bars}根K线"
+            )
             return False
+        if pause.reset_losses:
+            logger.info("连续亏损暂停结束，恢复交易")
+            self._consecutive_losses = 0
 
         # 计算仓位
-        balance = self.get_balance()
+        balance = self.initial_capital + self._total_pnl if self.dry_run \
+            else self.get_balance()
         if balance <= 0:
             logger.error("余额为0")
             return False
 
         entry = signal["entry"]; sl = signal["sl"]
-        stop_pct = abs(entry - sl) / entry
-        if stop_pct <= 0: return False
-
-        # 仓位大小 = (余额 × 风险比例 × 杠杆) / 止损距离
-        risk_amount = balance * self.risk_per_trade * self.leverage
-        position_value = risk_amount / stop_pct
-        size = position_value / entry  # 合约张数
+        sizing = calculate_position_size(
+            balance=balance,
+            entry=entry,
+            stop_loss=sl,
+            risk_per_trade=self.risk_per_trade,
+            leverage=self.leverage,
+            max_notional_pct=self.max_notional_pct,
+        )
+        if not sizing.tradable:
+            logger.warning(f"仓位计算失败: {sizing.reason}")
+            return False
+        size = sizing.size
 
         # 精度处理
         try:
-            market = self.exchange.market(ccxt_sym)
             amount = self.exchange.amount_to_precision(ccxt_sym, size)
             entry_price = self.exchange.price_to_precision(ccxt_sym, entry)
         except Exception:
@@ -306,10 +331,19 @@ class ProductionBot:
         side = "buy" if signal["side"] == "long" else "sell"
 
         if self.dry_run:
-            self._position = signal
+            self._position = {
+                **signal,
+                "size": size,
+                "notional": sizing.notional,
+                "raw_notional": sizing.raw_notional,
+                "max_notional": sizing.max_notional,
+                "capped": sizing.capped,
+            }
             logger.info(
                 f"📝 [纸上] {side.upper()} {amount}张 @{entry:.0f} "
+                f"名义={sizing.notional:.1f}U "
                 f"SL={sl:.0f} TP={signal['tp']:.0f}"
+                f"{' capped' if sizing.capped else ''}"
             )
             return True
 
@@ -320,7 +354,11 @@ class ProductionBot:
                 amount=amount, price=entry_price,
                 params={"tdMode": "isolated", "leverage": self.leverage},
             )
-            logger.info(f"📈 下单: {side} {amount}张 @{entry_price}")
+            logger.info(
+                f"📈 下单: {side} {amount}张 @{entry_price} "
+                f"名义={sizing.notional:.1f}U"
+                f"{' capped' if sizing.capped else ''}"
+            )
 
             # 设止盈止损
             try:
@@ -432,8 +470,24 @@ class ProductionBot:
                 else:
                     # 冷却期检查
                     bars_since = len(self._candles) - self._last_trade_bar
+                    pause = loss_pause_decision(
+                        consecutive_losses=self._consecutive_losses,
+                        max_consecutive_losses=self.max_consecutive_losses,
+                        current_bar=len(self._candles),
+                        last_trade_bar=self._last_trade_bar,
+                        loss_pause_bars=self.loss_pause_bars,
+                    )
+                    if not pause.can_trade:
+                        logger.debug(
+                            f"连续亏损暂停中: 剩余{pause.remaining_bars}根K线"
+                        )
+                        continue
+                    if pause.reset_losses:
+                        logger.info("连续亏损暂停结束，恢复交易")
+                        self._consecutive_losses = 0
+
                     cooldown = self.p_cooldown + \
-                        self._consecutive_losses * 3
+                        self._consecutive_losses * self.p_cooldown_extra_per_loss
                     if bars_since < cooldown:
                         logger.debug(f"冷却中: {bars_since}/{cooldown}")
                         continue
@@ -496,12 +550,13 @@ class ProductionBot:
         pos = self._position
         if not pos: return
 
+        notional = pos.get("notional", self.initial_capital * self.leverage)
         if pos["side"] == "long":
-            pnl_pct = (price / pos["entry"] - 1) * 100 * self.leverage
+            pnl_usdt = notional * (price / pos["entry"] - 1)
         else:
-            pnl_pct = (pos["entry"] / price - 1) * 100 * self.leverage
+            pnl_usdt = notional * (pos["entry"] / price - 1)
 
-        pnl_usdt = self.initial_capital * pnl_pct / 100
+        pnl_pct = (pnl_usdt / max(self.initial_capital, 1)) * 100
         self._total_pnl += pnl_usdt
         self._daily_pnl += pnl_usdt
 
@@ -515,6 +570,7 @@ class ProductionBot:
             "side": pos["side"],
             "entry": pos["entry"],
             "exit": price,
+            "notional": round(notional, 2),
             "pnl": round(pnl_usdt, 2),
             "pnl_pct": round(pnl_pct, 2),
             "reason": reason,
@@ -563,6 +619,8 @@ def run_bot(config_path: str = "config/production.yaml"):
     logger.add(log_file, rotation="10 MB", retention="7 days",
                level=cfg.get("mode", {}).get("log_level", "INFO"))
 
+    strategy_cfg = _normalize_strategy_config(cfg.get("strategy", {}))
+
     bot = ProductionBot(
         api_key=api_key, secret=secret, passphrase=passphrase,
         symbol=cfg["symbol"],
@@ -573,7 +631,9 @@ def run_bot(config_path: str = "config/production.yaml"):
         risk_per_trade=cfg["risk"].get("risk_per_trade", 0.02),
         max_daily_loss_pct=cfg["risk"].get("max_daily_loss_pct", 0.05),
         max_consecutive_losses=cfg["risk"].get("max_consecutive_losses", 5),
-        **cfg["strategy"],
+        loss_pause_bars=cfg["risk"].get("loss_pause_bars", 18),
+        max_notional_pct=cfg["risk"].get("max_notional_pct", 0.95),
+        **strategy_cfg,
     )
 
     bot.dry_run = cfg["mode"]["dry_run"]
@@ -582,3 +642,21 @@ def run_bot(config_path: str = "config/production.yaml"):
         bot.start()
     except KeyboardInterrupt:
         bot.stop()
+
+
+def _normalize_strategy_config(strategy_cfg: dict) -> dict:
+    """Map YAML strategy keys onto ProductionBot constructor parameters."""
+    cfg = dict(strategy_cfg)
+    cfg.pop("name", None)
+    cfg.pop("adx_period", None)
+    cfg.pop("atr_period", None)
+
+    key_map = {
+        "sl_atr_mult": "sl_atr",
+        "tp_atr_mult": "tp_atr",
+        "cooldown_base": "cooldown_bars",
+    }
+    for old_key, new_key in key_map.items():
+        if old_key in cfg:
+            cfg[new_key] = cfg.pop(old_key)
+    return cfg
