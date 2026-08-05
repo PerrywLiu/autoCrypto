@@ -228,7 +228,8 @@ def replay(
     df: pd.DataFrame,
     cfg: dict,
     strategy_overrides: dict | None = None,
-) -> tuple[dict, pd.DataFrame]:
+    return_equity: bool = False,
+) -> tuple[dict, pd.DataFrame] | tuple[dict, pd.DataFrame, pd.Series]:
     strategy = {**cfg["strategy"], **(strategy_overrides or {})}
     risk = cfg["risk"]
     indicators = calculate_indicators(df, strategy)
@@ -400,6 +401,8 @@ def replay(
         "buy_hold_worst_month": buy_hold_monthly["worst_month"],
         "excess": strategy_metrics["return"] - buy_hold_metrics["return"],
     }
+    if return_equity:
+        return summary, trades_df, strategy_equity
     return summary, trades_df
 
 

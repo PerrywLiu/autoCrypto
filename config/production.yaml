@@ -32,6 +32,30 @@ risk:
   max_consecutive_losses: 5   # 连续亏损暂停
   loss_pause_bars: 18         # 连续亏损后暂停 18 根4h K线(约72小时)再恢复
 
+portfolio:
+  enabled: true               # 启用组合级核心仓/卫星仓风控
+  mode: "paper"               # paper=只记录计划; live 模式需先补成交确认后再开放
+  core_weights:
+    strong_bull: 0.60         # 强牛: BTC 核心仓 60%
+    bull: 0.45                # 牛市: BTC 核心仓 45%
+    neutral: 0.25             # 中性: BTC 核心仓 25%
+    bear: 0.05                # 熊市: BTC 核心仓 5%
+  swing_limits:
+    strong_bull: {long: 0.30, short: 0.00}
+    bull: {long: 0.30, short: 0.00}
+    neutral: {long: 0.20, short: 0.10}
+    bear: {long: 0.10, short: 0.30}
+  rebalance_threshold: 0.05   # 普通调仓阈值
+  bear_rebalance_threshold: 0.01
+  urgent_drop_pct: 0.04       # 单根4h跌幅超过4%可触发急速减仓
+  core_buy_step: 0.50         # 每次最多加核心仓 50%权益
+  core_sell_step: 0.50        # 普通减仓每次最多减 50%权益
+  urgent_sell_step: 1.00      # 急速减仓可一次完成目标差额
+  spot_fee: 0.001
+  max_net_exposure: 0.90      # 组合净 BTC 敞口上限
+  max_gross_exposure: 1.20    # 组合总名义敞口上限
+  max_short_exposure: 0.30    # 组合净空头敞口上限
+
 mode:
   dry_run: true               # 纸上交易模式 (只看不下单)
   testnet: true               # 使用 OKX 模拟盘
@@ -41,3 +65,4 @@ mode:
 output:
   trade_log: "outputs/production_trades.json"
   log_file: "outputs/production.log"
+  state_file: "outputs/production_state.json"

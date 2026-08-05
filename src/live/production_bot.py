@@ -15,6 +15,14 @@ import ccxt
 import numpy as np
 from loguru import logger
 
+from src.live.portfolio import (
+    PortfolioConfig,
+    cap_swing_notional,
+    classify_latest_regime,
+    load_portfolio_config,
+    plan_core_rebalance,
+    portfolio_exposure,
+)
 from src.live.risk import calculate_position_size, loss_pause_decision
 
 
@@ -115,6 +123,8 @@ class ProductionBot:
         sl_atr: float = 1.5, tp_atr: float = 3.0,
         cooldown_bars: int = 6,
         cooldown_extra_per_loss: int = 3,
+        portfolio_config: PortfolioConfig | None = None,
+        state_file: str = "outputs/production_state.json",
     ):
         self.symbol = symbol
         self.timeframe = timeframe
@@ -137,6 +147,8 @@ class ProductionBot:
         self.p_sl_atr = sl_atr; self.p_tp_atr = tp_atr
         self.p_cooldown = cooldown_bars
         self.p_cooldown_extra_per_loss = cooldown_extra_per_loss
+        self.portfolio_config = portfolio_config or PortfolioConfig()
+        self.state_file = Path(state_file)
 
         # OKX 连接
         self.exchange = ccxt.okx({
@@ -156,6 +168,8 @@ class ProductionBot:
         self._daily_pnl = 0.0
         self._last_trade_day = 0
         self._total_pnl = 0.0
+        self._paper_core_btc = 0.0
+        self._paper_cash = initial_capital
 
         # K线缓存
         self._candles: list = []
@@ -164,6 +178,68 @@ class ProductionBot:
 
         mode = "🧪纸上交易" if self.dry_run else ("🧪模拟盘" if testnet else "⚠️实盘")
         logger.info(f"🤖 TripleEma机器人: {symbol} {timeframe} {leverage}x {mode}")
+        if self.portfolio_config.enabled:
+            logger.info(
+                "组合风控已启用: "
+                f"mode={self.portfolio_config.mode} "
+                f"net<={self.portfolio_config.max_net_exposure:.0%} "
+                f"gross<={self.portfolio_config.max_gross_exposure:.0%}"
+            )
+
+    def _state_payload(self) -> dict:
+        return {
+            "version": 1,
+            "symbol": self.symbol,
+            "timeframe": self.timeframe,
+            "dry_run": self.dry_run,
+            "paper_cash": self._paper_cash,
+            "paper_core_btc": self._paper_core_btc,
+            "position": self._position,
+            "total_pnl": self._total_pnl,
+            "daily_pnl": self._daily_pnl,
+            "last_trade_day": self._last_trade_day,
+            "consecutive_losses": self._consecutive_losses,
+            "last_trade_bar": self._last_trade_bar,
+            "trade_log": self._trade_log,
+            "updated_at": str(datetime.now(timezone.utc)),
+        }
+
+    def _save_state(self):
+        if not self.dry_run:
+            return
+        try:
+            self.state_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.state_file, "w") as f:
+                json.dump(self._state_payload(), f, indent=2, ensure_ascii=False, default=str)
+        except Exception as e:
+            logger.warning(f"保存状态失败: {e}")
+
+    def _load_state(self):
+        if not self.dry_run or not self.state_file.exists():
+            return
+        try:
+            with open(self.state_file) as f:
+                state = json.load(f)
+            if state.get("symbol") != self.symbol or state.get("timeframe") != self.timeframe:
+                logger.warning("状态文件交易对或周期不匹配，跳过恢复")
+                return
+            self._paper_cash = float(state.get("paper_cash", self._paper_cash))
+            self._paper_core_btc = float(state.get("paper_core_btc", self._paper_core_btc))
+            self._position = state.get("position")
+            self._total_pnl = float(state.get("total_pnl", self._total_pnl))
+            self._daily_pnl = float(state.get("daily_pnl", self._daily_pnl))
+            self._last_trade_day = int(state.get("last_trade_day", self._last_trade_day))
+            self._consecutive_losses = int(
+                state.get("consecutive_losses", self._consecutive_losses)
+            )
+            self._last_trade_bar = int(state.get("last_trade_bar", self._last_trade_bar))
+            self._trade_log = list(state.get("trade_log", self._trade_log))
+            logger.info(
+                f"已恢复纸上组合状态: cash={self._paper_cash:.1f}U "
+                f"core_btc={self._paper_core_btc:.8f} position={'yes' if self._position else 'no'}"
+            )
+        except Exception as e:
+            logger.warning(f"恢复状态失败: {e}")
 
     # ═══════════════════════
     # 数据
@@ -303,9 +379,147 @@ class ProductionBot:
         except Exception as e:
             logger.warning(f"设置杠杆失败(可能已设置): {e}")
 
+    def _portfolio_cash(self) -> float:
+        if self.dry_run:
+            return self._paper_cash
+        return self.get_balance()
+
+    def _portfolio_equity(self, price: float) -> float:
+        if self.dry_run:
+            equity = self._paper_cash + self._paper_core_btc * price
+            if self._position:
+                notional = float(self._position.get("notional", 0.0))
+                entry = float(self._position.get("entry", price))
+                if self._position.get("side") == "long":
+                    equity += notional * (price / entry - 1)
+                else:
+                    equity += notional * (entry / price - 1)
+            return equity
+        return self.get_balance()
+
+    def _account_snapshot(self, price: float) -> dict:
+        equity = self._portfolio_equity(price)
+        exposure = portfolio_exposure(
+            equity=equity,
+            price=price,
+            core_btc=self._paper_core_btc if self.dry_run else 0.0,
+            swing_side=self._position.get("side") if self._position else None,
+            swing_notional=float(self._position.get("notional", 0.0)) if self._position else 0.0,
+        )
+        return {
+            "mode": "paper" if self.dry_run else "live_readonly",
+            "price": price,
+            "equity": equity,
+            "cash": self._portfolio_cash(),
+            "core_btc": self._paper_core_btc if self.dry_run else 0.0,
+            "position": self._position,
+            "net_exposure": exposure.net,
+            "gross_exposure": exposure.gross,
+            "core_weight": exposure.core_weight,
+            "swing_weight": exposure.swing_weight,
+            "updated_at": str(datetime.now(timezone.utc)),
+        }
+
+    def _write_account_snapshot(self, price: float):
+        output = self.state_file.parent / "production_account_snapshot.json"
+        try:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            with open(output, "w") as f:
+                json.dump(self._account_snapshot(price), f, indent=2, ensure_ascii=False, default=str)
+        except Exception as e:
+            logger.warning(f"保存账户快照失败: {e}")
+
+    def _update_portfolio_plan(self, latest: list | None = None):
+        """Log live portfolio targets; paper mode also simulates core spot rebalancing."""
+        if not self.portfolio_config.enabled or len(self._ohlcv["close"]) == 0:
+            return
+
+        close = float(self._ohlcv["close"][-1])
+        open_price = float(self._ohlcv["open"][-1])
+        ema200 = float(self._indicators.get("ema200", [np.nan])[-1])
+        regime = classify_latest_regime(self._ohlcv["close"])
+        target_weight = self.portfolio_config.core_weights.get(
+            regime,
+            self.portfolio_config.core_weights["neutral"],
+        )
+        equity = self._portfolio_equity(close)
+        cash = self._portfolio_cash()
+        core_btc = self._paper_core_btc if self.dry_run else 0.0
+        exposure = portfolio_exposure(
+            equity=equity,
+            price=close,
+            core_btc=core_btc,
+            swing_side=self._position.get("side") if self._position else None,
+            swing_notional=float(self._position.get("notional", 0.0)) if self._position else 0.0,
+        )
+        bar_return = close / open_price - 1 if open_price > 0 else 0.0
+        plan = plan_core_rebalance(
+            current_weight=exposure.core_weight,
+            target_weight=target_weight,
+            regime_label=regime,
+            bar_return=bar_return,
+            close=close,
+            ema200=ema200,
+            config=self.portfolio_config,
+        )
+
+        logger.info(
+            "组合计划: "
+            f"regime={regime} equity={equity:.1f}U cash={cash:.1f}U "
+            f"core={exposure.core_weight:.1%}->{target_weight:.1%} "
+            f"net={exposure.net:.1%} gross={exposure.gross:.1%} "
+            f"plan={plan.reason or 'hold'} delta={plan.weight_delta:+.1%}"
+        )
+
+        if not self.dry_run or plan.weight_delta == 0:
+            return
+
+        target_after_step = exposure.core_weight + plan.weight_delta
+        target_notional = equity * target_after_step
+        current_notional = self._paper_core_btc * close
+        diff = target_notional - current_notional
+        if diff > 0:
+            buy_notional = min(diff, self._paper_cash / (1 + self.portfolio_config.spot_fee))
+            if buy_notional <= 0:
+                return
+            fee = buy_notional * self.portfolio_config.spot_fee
+            self._paper_cash -= buy_notional + fee
+            self._paper_core_btc += buy_notional / close
+            logger.info(
+                f"📝 [纸上核心仓] BUY BTC 名义={buy_notional:.1f}U fee={fee:.2f}U"
+            )
+            self._save_state()
+        else:
+            sell_notional = min(abs(diff), current_notional)
+            if sell_notional <= 0:
+                return
+            fee = sell_notional * self.portfolio_config.spot_fee
+            self._paper_cash += sell_notional - fee
+            self._paper_core_btc -= sell_notional / close
+            logger.info(
+                f"📝 [纸上核心仓] SELL BTC 名义={sell_notional:.1f}U fee={fee:.2f}U"
+                f"{' urgent' if plan.urgent else ''}"
+            )
+            self._save_state()
+
     def execute_signal(self, signal: dict) -> bool:
         """执行交易信号"""
         ccxt_sym = self.symbol + ":USDT"
+
+        if self._position:
+            logger.info("已有纸上持仓, 跳过")
+            return False
+
+        if (
+            self.portfolio_config.enabled
+            and self.portfolio_config.mode != "live"
+            and not self.dry_run
+        ):
+            logger.warning(
+                "组合风控处于非 live 模式，禁止真实下单；"
+                "请先完成核心仓实盘执行与成交恢复后再切换 portfolio.mode=live"
+            )
+            return False
 
         # 检查现有持仓
         if self.get_position():
@@ -357,7 +571,40 @@ class ProductionBot:
         if not sizing.tradable:
             logger.warning(f"仓位计算失败: {sizing.reason}")
             return False
-        size = sizing.size
+
+        notional = sizing.notional
+        if self.portfolio_config.enabled:
+            regime = classify_latest_regime(self._ohlcv["close"])
+            equity = self._portfolio_equity(float(signal["entry"]))
+            core_notional = self._paper_core_btc * float(signal["entry"]) \
+                if self.dry_run else 0.0
+            swing_limit = self.portfolio_config.swing_limits.get(
+                regime,
+                self.portfolio_config.swing_limits["neutral"],
+            ).get(signal["side"], 0.0)
+            capped_notional = cap_swing_notional(
+                side=signal["side"],
+                requested=notional,
+                equity=equity,
+                cash=self._portfolio_cash(),
+                core_notional=core_notional,
+                regime_limit=swing_limit,
+                leverage=self.leverage,
+                config=self.portfolio_config,
+            )
+            if capped_notional <= 0:
+                logger.info(
+                    f"组合风控拦截{signal['side']}信号: "
+                    f"regime={regime} limit={swing_limit:.0%}"
+                )
+                return False
+            if capped_notional < notional:
+                logger.info(
+                    f"组合风控缩小仓位: {notional:.1f}U -> {capped_notional:.1f}U"
+                )
+                notional = capped_notional
+
+        size = notional / entry
 
         # 精度处理
         try:
@@ -373,17 +620,18 @@ class ProductionBot:
             self._position = {
                 **signal,
                 "size": size,
-                "notional": sizing.notional,
+                "notional": notional,
                 "raw_notional": sizing.raw_notional,
                 "max_notional": sizing.max_notional,
-                "capped": sizing.capped,
+                "capped": sizing.capped or notional < sizing.notional,
             }
             logger.info(
                 f"📝 [纸上] {side.upper()} {amount}张 @{entry:.0f} "
-                f"名义={sizing.notional:.1f}U "
+                f"名义={notional:.1f}U "
                 f"SL={sl:.0f} TP={signal['tp']:.0f}"
-                f"{' capped' if sizing.capped else ''}"
+                f"{' capped' if sizing.capped or notional < sizing.notional else ''}"
             )
+            self._save_state()
             return True
 
         # 真实下单
@@ -395,8 +643,8 @@ class ProductionBot:
             )
             logger.info(
                 f"📈 下单: {side} {amount}张 @{entry_price} "
-                f"名义={sizing.notional:.1f}U"
-                f"{' capped' if sizing.capped else ''}"
+                f"名义={notional:.1f}U"
+                f"{' capped' if sizing.capped or notional < sizing.notional else ''}"
             )
 
             # 设止盈止损
@@ -433,15 +681,17 @@ class ProductionBot:
         logger.info("🚀 启动 TripleEma 实盘机器人...")
 
         self.load_history(500)
+        self._load_state()
         self.set_leverage()
 
         # 检查现有持仓
-        pos = self.get_position()
-        if pos:
-            side = pos.get("side", "?")
-            contracts = pos.get("contracts", 0)
-            logger.info(f"⚠️ 检测到现有持仓: {side} {contracts}张, 请手动处理")
-            return
+        if not self.dry_run:
+            pos = self.get_position()
+            if pos:
+                side = pos.get("side", "?")
+                contracts = pos.get("contracts", 0)
+                logger.info(f"⚠️ 检测到现有持仓: {side} {contracts}张, 请手动处理")
+                return
 
         self._running = True
         logger.info("✅ 机器人已启动")
@@ -455,6 +705,8 @@ class ProductionBot:
             f"EMA200={ind['ema200'][-1]:.0f} ADX={ind['adx'][-1]:.0f}"
         )
         logger.info(f"   牛熊: {'🐂牛市' if c > ind['ema200'][-1] else '🐻熊市'}")
+        self._update_portfolio_plan()
+        self._write_account_snapshot(float(c))
 
         signal = self.evaluate()
         if signal:
@@ -502,6 +754,8 @@ class ProductionBot:
                     f"O={latest[1]:.0f} H={latest[2]:.0f} "
                     f"L={latest[3]:.0f} C={latest[4]:.0f}"
                 )
+                self._update_portfolio_plan(latest)
+                self._write_account_snapshot(float(latest[4]))
 
                 # 持仓检查
                 if self._position:
@@ -629,6 +883,7 @@ class ProductionBot:
         with open("outputs/production_trades.json", "w") as f:
             json.dump(self._trade_log, f, indent=2,
                       ensure_ascii=False, default=str)
+        self._save_state()
 
     def stop(self):
         """停止机器人"""
@@ -672,6 +927,8 @@ def run_bot(config_path: str = "config/production.yaml"):
         max_consecutive_losses=cfg["risk"].get("max_consecutive_losses", 5),
         loss_pause_bars=cfg["risk"].get("loss_pause_bars", 18),
         max_notional_pct=cfg["risk"].get("max_notional_pct", 0.95),
+        portfolio_config=load_portfolio_config(cfg.get("portfolio")),
+        state_file=cfg.get("output", {}).get("state_file", "outputs/production_state.json"),
         **strategy_cfg,
     )
 
