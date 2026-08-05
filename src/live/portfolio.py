@@ -18,6 +18,7 @@ DEFAULT_SWING_LIMITS = {
     "neutral": {"long": 0.20, "short": 0.10},
     "bear": {"long": 0.10, "short": 0.30},
 }
+LIVE_TRADING_MODES = {"testnet_live", "live_small", "live_scaled"}
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,10 @@ class PortfolioConfig:
     max_net_exposure: float = 0.90
     max_gross_exposure: float = 1.20
     max_short_exposure: float = 0.30
+    max_order_notional_usdt: float = 20.0
+    min_order_notional_usdt: float = 5.0
+    allow_spot_trading: bool = False
+    allow_swap_trading: bool = False
 
 
 @dataclass(frozen=True)
@@ -77,6 +82,14 @@ def load_portfolio_config(cfg: dict | None) -> PortfolioConfig:
         max_net_exposure=float(raw.get("max_net_exposure", defaults.max_net_exposure)),
         max_gross_exposure=float(raw.get("max_gross_exposure", defaults.max_gross_exposure)),
         max_short_exposure=float(raw.get("max_short_exposure", defaults.max_short_exposure)),
+        max_order_notional_usdt=float(
+            raw.get("max_order_notional_usdt", defaults.max_order_notional_usdt)
+        ),
+        min_order_notional_usdt=float(
+            raw.get("min_order_notional_usdt", defaults.min_order_notional_usdt)
+        ),
+        allow_spot_trading=bool(raw.get("allow_spot_trading", defaults.allow_spot_trading)),
+        allow_swap_trading=bool(raw.get("allow_swap_trading", defaults.allow_swap_trading)),
     )
 
 

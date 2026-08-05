@@ -9,13 +9,21 @@ import json
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import ccxt
 import numpy as np
 from loguru import logger
 
+from src.live.alerts import LocalAlertManager
+from src.live.okx_account import OKXAccountReader, reconcile_account_state
+from src.live.order_executor import (
+    OrderExecutor,
+    OrderPlan,
+    build_spot_core_rebalance_plan,
+)
 from src.live.portfolio import (
+    LIVE_TRADING_MODES,
     PortfolioConfig,
     cap_swing_notional,
     classify_latest_regime,
@@ -125,6 +133,8 @@ class ProductionBot:
         cooldown_extra_per_loss: int = 3,
         portfolio_config: PortfolioConfig | None = None,
         state_file: str = "outputs/production_state.json",
+        max_api_errors: int = 3,
+        alert_manager: LocalAlertManager | None = None,
     ):
         self.symbol = symbol
         self.timeframe = timeframe
@@ -149,6 +159,8 @@ class ProductionBot:
         self.p_cooldown_extra_per_loss = cooldown_extra_per_loss
         self.portfolio_config = portfolio_config or PortfolioConfig()
         self.state_file = Path(state_file)
+        self.max_api_errors = max_api_errors
+        self.alert_manager = alert_manager
 
         # OKX 连接
         self.exchange = ccxt.okx({
@@ -158,6 +170,8 @@ class ProductionBot:
         })
         if testnet:
             self.exchange.set_sandbox_mode(True)
+        self.account_reader = OKXAccountReader(self.exchange, self.symbol)
+        self.order_executor = OrderExecutor(self.exchange)
 
         self.dry_run = True       # 默认纸上交易
         self._running = False
@@ -168,6 +182,8 @@ class ProductionBot:
         self._daily_pnl = 0.0
         self._last_trade_day = 0
         self._total_pnl = 0.0
+        self._paused_reason: str | None = None
+        self._api_error_count = 0
         self._paper_core_btc = 0.0
         self._paper_cash = initial_capital
 
@@ -189,6 +205,7 @@ class ProductionBot:
     def _state_payload(self) -> dict:
         return {
             "version": 1,
+            "schema": "production_bot_state",
             "symbol": self.symbol,
             "timeframe": self.timeframe,
             "dry_run": self.dry_run,
@@ -205,8 +222,6 @@ class ProductionBot:
         }
 
     def _save_state(self):
-        if not self.dry_run:
-            return
         try:
             self.state_file.parent.mkdir(parents=True, exist_ok=True)
             with open(self.state_file, "w") as f:
@@ -215,11 +230,16 @@ class ProductionBot:
             logger.warning(f"保存状态失败: {e}")
 
     def _load_state(self):
-        if not self.dry_run or not self.state_file.exists():
+        if not self.state_file.exists():
             return
         try:
             with open(self.state_file) as f:
                 state = json.load(f)
+            reason = self._validate_state_payload(state)
+            if reason:
+                self._paused_reason = f"state_invalid:{reason}"
+                logger.warning(f"状态文件校验失败，跳过恢复: {reason}")
+                return
             if state.get("symbol") != self.symbol or state.get("timeframe") != self.timeframe:
                 logger.warning("状态文件交易对或周期不匹配，跳过恢复")
                 return
@@ -235,11 +255,247 @@ class ProductionBot:
             self._last_trade_bar = int(state.get("last_trade_bar", self._last_trade_bar))
             self._trade_log = list(state.get("trade_log", self._trade_log))
             logger.info(
-                f"已恢复纸上组合状态: cash={self._paper_cash:.1f}U "
+                f"已恢复交易状态: cash={self._paper_cash:.1f}U "
                 f"core_btc={self._paper_core_btc:.8f} position={'yes' if self._position else 'no'}"
             )
         except Exception as e:
             logger.warning(f"恢复状态失败: {e}")
+
+    def _validate_state_payload(self, state: dict[str, Any]) -> str:
+        if int(state.get("version", 0) or 0) != 1:
+            return "version"
+        if state.get("schema") not in (None, "production_bot_state"):
+            return "schema"
+        if state.get("symbol") != self.symbol or state.get("timeframe") != self.timeframe:
+            return "identity"
+
+        position = state.get("position")
+        if position is None:
+            return ""
+        if not isinstance(position, dict):
+            return "position_type"
+
+        required = ("side", "entry", "notional")
+        for key in required:
+            if key not in position:
+                return f"position_missing_{key}"
+        if str(position.get("side")).lower() not in ("long", "short"):
+            return "position_side"
+        for key in ("entry", "notional"):
+            try:
+                if float(position.get(key)) <= 0:
+                    return f"position_{key}"
+            except (TypeError, ValueError):
+                return f"position_{key}"
+
+        if self.dry_run:
+            return ""
+
+        live_required = ("size", "entry_order_id", "protective_orders")
+        for key in live_required:
+            if key not in position:
+                return f"live_position_missing_{key}"
+        try:
+            if float(position.get("size")) <= 0:
+                return "live_position_size"
+        except (TypeError, ValueError):
+            return "live_position_size"
+
+        protective = position.get("protective_orders")
+        if not isinstance(protective, dict):
+            return "protective_orders_type"
+        if not protective.get("take_profit"):
+            return "protective_take_profit"
+        if not protective.get("stop_loss"):
+            return "protective_stop_loss"
+        if not position.get("entry_order_id"):
+            return "entry_order_id"
+        return ""
+
+    def _order_id(self, result) -> str | None:
+        order = getattr(result, "order", None) or {}
+        value = order.get("id") or order.get("orderId") or (order.get("info") or {}).get("ordId")
+        return str(value) if value else None
+
+    def _order_average_price(self, result, fallback: float) -> float:
+        order = getattr(result, "order", None) or {}
+        info = order.get("info", {}) or {}
+        for key in ("average", "avgPrice", "price"):
+            value = order.get(key)
+            try:
+                parsed = float(value)
+            except (TypeError, ValueError):
+                parsed = 0.0
+            if parsed > 0:
+                return parsed
+        for key in ("avgPx", "fillPx", "px"):
+            try:
+                parsed = float(info.get(key))
+            except (TypeError, ValueError):
+                parsed = 0.0
+            if parsed > 0:
+                return parsed
+        return fallback
+
+    def _order_filled_amount(self, result, fallback: float) -> float:
+        filled = float(getattr(result, "filled", 0.0) or 0.0)
+        if filled > 0:
+            return filled
+        order = getattr(result, "order", None) or {}
+        info = order.get("info", {}) or {}
+        for key in ("filled", "filledSz", "accFillSz"):
+            try:
+                parsed = float(order.get(key) or info.get(key))
+            except (TypeError, ValueError):
+                parsed = 0.0
+            if parsed > 0:
+                return parsed
+        return fallback
+
+    def _order_fee(self, result) -> dict[str, Any]:
+        return {
+            "cost": float(getattr(result, "fee_cost", 0.0) or 0.0),
+            "currency": str(getattr(result, "fee_currency", "") or ""),
+        }
+
+    def _order_snapshot(self, result) -> dict[str, Any]:
+        order = getattr(result, "order", None) or {}
+        return {
+            "id": self._order_id(result),
+            "status": getattr(result, "status", ""),
+            "filled": float(getattr(result, "filled", 0.0) or 0.0),
+            "remaining": float(getattr(result, "remaining", 0.0) or 0.0),
+            "fee": self._order_fee(result),
+            "raw": order,
+        }
+
+    def _protective_order_ids(self) -> set[str]:
+        if not self._position:
+            return set()
+        orders = self._position.get("protective_orders") or {}
+        return {str(order_id) for order_id in orders.values() if order_id}
+
+    def _open_order_ids(self, orders: list[dict[str, Any]]) -> set[str]:
+        ids = set()
+        for order in orders:
+            info = order.get("info", {}) or {}
+            value = order.get("id") or order.get("orderId") or info.get("ordId")
+            if value:
+                ids.add(str(value))
+        return ids
+
+    def _protective_orders_present(self, orders: list[dict[str, Any]]) -> bool:
+        expected = self._protective_order_ids()
+        return bool(expected) and expected.issubset(self._open_order_ids(orders))
+
+    def _record_api_success(self):
+        self._api_error_count = 0
+
+    def _record_api_failure(self, reason: str, error: Exception | str) -> bool:
+        self._api_error_count += 1
+        if self._api_error_count >= self.max_api_errors:
+            self._paused_reason = "api_errors_exceeded"
+            logger.error(
+                f"连续 API 错误达到上限({self._api_error_count}/{self.max_api_errors})，"
+                f"暂停交易: {reason}: {error}"
+            )
+            if self.alert_manager:
+                self.alert_manager.send(
+                    "critical",
+                    "api_errors_exceeded",
+                    "连续 API 错误达到上限，交易已暂停",
+                    {
+                        "reason": reason,
+                        "error": str(error),
+                        "count": self._api_error_count,
+                        "max_api_errors": self.max_api_errors,
+                    },
+                )
+            return False
+        self._paused_reason = reason
+        logger.error(
+            f"API 错误({self._api_error_count}/{self.max_api_errors}): {reason}: {error}"
+        )
+        return False
+
+    def _cancel_protective_orders(self, symbol: str) -> tuple[bool, str]:
+        for order_id in self._protective_order_ids():
+            result = self.order_executor.cancel_order(order_id, symbol)
+            if not result.ok:
+                return False, f"cancel_protective_failed:{order_id}:{result.reason}"
+        return True, ""
+
+    def _execute_live_close(self, reason: str, price: float) -> dict[str, Any] | None:
+        pos = self._position
+        if not pos:
+            return None
+
+        ccxt_sym = self.symbol + ":USDT"
+        try:
+            snapshot = self.account_reader.snapshot(price)
+        except Exception as e:
+            self._record_api_failure("account_snapshot_failed", e)
+            return None
+
+        close_order_id = None
+        close_order = None
+        close_fee = {"cost": 0.0, "currency": ""}
+        exit_price = price
+        filled_size = float(pos.get("size", 0.0) or 0.0)
+        if snapshot.swap_position:
+            close_side = "sell" if pos["side"] == "long" else "buy"
+            size = filled_size or snapshot.swap_position.contracts
+            try:
+                amount = self.exchange.amount_to_precision(ccxt_sym, size)
+            except Exception:
+                amount = round(size, 4)
+            close_result = self.order_executor.submit(OrderPlan(
+                symbol=ccxt_sym,
+                order_type="market",
+                side=close_side,
+                amount=amount,
+                params={"reduceOnly": True, "tdMode": "isolated"},
+                purpose="close",
+            ))
+            if not close_result.ok:
+                self._paused_reason = f"close_order_failed:{close_result.reason}"
+                logger.error(f"平仓下单失败，暂停交易: {close_result.reason}")
+                return None
+            fill_result = self.order_executor.wait_for_fill(close_result.order, ccxt_sym)
+            if not fill_result.ok:
+                self._paused_reason = f"close_not_filled:{fill_result.reason}"
+                logger.error(f"平仓未成交，暂停交易: {fill_result.reason}")
+                return None
+            close_order_id = self._order_id(fill_result)
+            close_order = self._order_snapshot(fill_result)
+            close_fee = self._order_fee(fill_result)
+            exit_price = self._order_average_price(fill_result, price)
+            filled_size = self._order_filled_amount(fill_result, filled_size)
+
+        cancelled, cancel_reason = self._cancel_protective_orders(ccxt_sym)
+        if not cancelled:
+            self._paused_reason = cancel_reason
+            logger.error(f"保护单撤销失败，暂停交易: {cancel_reason}")
+            return None
+
+        try:
+            after = self.account_reader.snapshot(exit_price)
+        except Exception as e:
+            self._record_api_failure("account_snapshot_failed", e)
+            return None
+        if after.swap_position:
+            self._paused_reason = "close_position_not_flat"
+            logger.error("平仓后交易所仍有合约仓位，暂停交易")
+            return None
+
+        return {
+            "exit_price": exit_price,
+            "filled_size": filled_size,
+            "close_order_id": close_order_id,
+            "close_order": close_order,
+            "close_fee": close_fee,
+            "exchange_already_flat": snapshot.swap_position is None,
+        }
 
     # ═══════════════════════
     # 数据
@@ -395,9 +651,20 @@ class ProductionBot:
                 else:
                     equity += notional * (entry / price - 1)
             return equity
-        return self.get_balance()
+        try:
+            return self.account_reader.snapshot(price).equity_usdt
+        except Exception as e:
+            self._record_api_failure("account_snapshot_failed", e)
+            return self.get_balance()
 
     def _account_snapshot(self, price: float) -> dict:
+        if not self.dry_run:
+            snapshot = self.account_reader.snapshot(price)
+            return {
+                "mode": "live_readonly",
+                "price": price,
+                **snapshot.as_dict(),
+            }
         equity = self._portfolio_equity(price)
         exposure = portfolio_exposure(
             equity=equity,
@@ -429,6 +696,35 @@ class ProductionBot:
         except Exception as e:
             logger.warning(f"保存账户快照失败: {e}")
 
+    def _reconcile_live_state(self, price: float) -> bool:
+        if self.dry_run:
+            self._paused_reason = None
+            return True
+        try:
+            snapshot = self.account_reader.snapshot(price)
+        except Exception as e:
+            self._record_api_failure("account_snapshot_failed", e)
+            return False
+
+        result = reconcile_account_state(
+            snapshot,
+            self._position,
+            allow_open_orders=bool(self._protective_order_ids()),
+        )
+        if result.ok:
+            if self._position and not self._protective_orders_present(snapshot.open_orders):
+                self._paused_reason = "protective_orders_missing"
+                logger.warning("保护单缺失，暂停交易")
+                return False
+            self._record_api_success()
+            self._paused_reason = None
+            logger.info("账户对账通过")
+            return True
+
+        self._paused_reason = result.reason
+        logger.warning(f"账户对账失败，暂停交易: {result.reason}")
+        return False
+
     def _update_portfolio_plan(self, latest: list | None = None):
         """Log live portfolio targets; paper mode also simulates core spot rebalancing."""
         if not self.portfolio_config.enabled or len(self._ohlcv["close"]) == 0:
@@ -444,13 +740,25 @@ class ProductionBot:
         )
         equity = self._portfolio_equity(close)
         cash = self._portfolio_cash()
-        core_btc = self._paper_core_btc if self.dry_run else 0.0
+        live_snapshot = None
+        if not self.dry_run:
+            try:
+                live_snapshot = self.account_reader.snapshot(close)
+            except Exception as e:
+                self._record_api_failure("account_snapshot_failed", e)
+                return
+        core_btc = self._paper_core_btc if self.dry_run else live_snapshot.core_btc
+        swing_side = self._position.get("side") if self._position else None
+        swing_notional = float(self._position.get("notional", 0.0)) if self._position else 0.0
+        if live_snapshot and live_snapshot.swap_position:
+            swing_side = live_snapshot.swap_position.side
+            swing_notional = live_snapshot.swap_position.notional
         exposure = portfolio_exposure(
             equity=equity,
             price=close,
             core_btc=core_btc,
-            swing_side=self._position.get("side") if self._position else None,
-            swing_notional=float(self._position.get("notional", 0.0)) if self._position else 0.0,
+            swing_side=swing_side,
+            swing_notional=swing_notional,
         )
         bar_return = close / open_price - 1 if open_price > 0 else 0.0
         plan = plan_core_rebalance(
@@ -470,6 +778,27 @@ class ProductionBot:
             f"net={exposure.net:.1%} gross={exposure.gross:.1%} "
             f"plan={plan.reason or 'hold'} delta={plan.weight_delta:+.1%}"
         )
+
+        if not self.dry_run:
+            spot_plan = build_spot_core_rebalance_plan(
+                symbol=self.symbol,
+                price=close,
+                equity=equity,
+                current_core_btc=core_btc,
+                target_weight=target_weight,
+                threshold=self.portfolio_config.rebalance_threshold,
+                max_notional=self.portfolio_config.max_order_notional_usdt,
+                min_notional=self.portfolio_config.min_order_notional_usdt,
+            )
+            if spot_plan:
+                logger.info(
+                    "现货核心仓计划: "
+                    f"{spot_plan.side.upper()} {spot_plan.symbol} "
+                    f"amount={spot_plan.amount} max_notional="
+                    f"{self.portfolio_config.max_order_notional_usdt:.1f}U "
+                    f"allow_spot={self.portfolio_config.allow_spot_trading}"
+                )
+            return
 
         if not self.dry_run or plan.weight_delta == 0:
             return
@@ -506,19 +835,32 @@ class ProductionBot:
         """执行交易信号"""
         ccxt_sym = self.symbol + ":USDT"
 
+        if self._paused_reason:
+            logger.warning(f"交易暂停中: {self._paused_reason}")
+            return False
+
         if self._position:
             logger.info("已有纸上持仓, 跳过")
             return False
 
         if (
             self.portfolio_config.enabled
-            and self.portfolio_config.mode != "live"
+            and self.portfolio_config.mode not in LIVE_TRADING_MODES
             and not self.dry_run
         ):
             logger.warning(
                 "组合风控处于非 live 模式，禁止真实下单；"
-                "请先完成核心仓实盘执行与成交恢复后再切换 portfolio.mode=live"
+                "请先完成核心仓实盘执行与成交恢复后再切换到 testnet_live/live_small/live_scaled"
             )
+            return False
+        if (
+            self.portfolio_config.enabled
+            and self.portfolio_config.mode in LIVE_TRADING_MODES
+            and not self.portfolio_config.allow_swap_trading
+            and not self.dry_run
+        ):
+            self._paused_reason = "swap_trading_disabled"
+            logger.warning("合约交易硬开关未开启，禁止真实下单")
             return False
 
         # 检查现有持仓
@@ -576,8 +918,13 @@ class ProductionBot:
         if self.portfolio_config.enabled:
             regime = classify_latest_regime(self._ohlcv["close"])
             equity = self._portfolio_equity(float(signal["entry"]))
-            core_notional = self._paper_core_btc * float(signal["entry"]) \
-                if self.dry_run else 0.0
+            if self.dry_run:
+                core_notional = self._paper_core_btc * float(signal["entry"])
+                cash = self._portfolio_cash()
+            else:
+                live_snapshot = self.account_reader.snapshot(float(signal["entry"]))
+                core_notional = live_snapshot.core_notional
+                cash = live_snapshot.usdt.free
             swing_limit = self.portfolio_config.swing_limits.get(
                 regime,
                 self.portfolio_config.swing_limits["neutral"],
@@ -586,7 +933,7 @@ class ProductionBot:
                 side=signal["side"],
                 requested=notional,
                 equity=equity,
-                cash=self._portfolio_cash(),
+                cash=cash,
                 core_notional=core_notional,
                 regime_limit=swing_limit,
                 leverage=self.leverage,
@@ -634,43 +981,80 @@ class ProductionBot:
             self._save_state()
             return True
 
-        # 真实下单
-        try:
-            order = self.exchange.create_order(
-                symbol=ccxt_sym, type="limit", side=side,
-                amount=amount, price=entry_price,
+        tp_side = "sell" if side == "buy" else "buy"
+        tp_price = self.exchange.price_to_precision(ccxt_sym, signal["tp"])
+        sl_price = self.exchange.price_to_precision(ccxt_sym, signal["sl"])
+        result = self.order_executor.submit_bracket(
+            entry=OrderPlan(
+                symbol=ccxt_sym,
+                order_type="limit",
+                side=side,
+                amount=amount,
+                price=entry_price,
                 params={"tdMode": "isolated", "leverage": self.leverage},
+                purpose="entry",
+            ),
+            take_profit=OrderPlan(
+                symbol=ccxt_sym,
+                order_type="limit",
+                side=tp_side,
+                amount=amount,
+                price=tp_price,
+                params={"reduceOnly": True, "tdMode": "isolated"},
+                purpose="take_profit",
+            ),
+            stop_loss=OrderPlan(
+                symbol=ccxt_sym,
+                order_type="stop_market",
+                side=tp_side,
+                amount=amount,
+                params={
+                    "stopPrice": sl_price,
+                    "reduceOnly": True,
+                    "tdMode": "isolated",
+                },
+                purpose="stop_loss",
             )
-            logger.info(
-                f"📈 下单: {side} {amount}张 @{entry_price} "
-                f"名义={notional:.1f}U"
-                f"{' capped' if sizing.capped or notional < sizing.notional else ''}"
-            )
-
-            # 设止盈止损
-            try:
-                tp_side = "sell" if side == "buy" else "buy"
-                tp_price = self.exchange.price_to_precision(ccxt_sym, signal["tp"])
-                sl_price = self.exchange.price_to_precision(ccxt_sym, signal["sl"])
-                self.exchange.create_order(
-                    ccxt_sym, "limit", tp_side,
-                    amount=amount, price=tp_price,
-                    params={"reduceOnly": True, "tdMode": "isolated"}
-                )
-                self.exchange.create_order(
-                    ccxt_sym, "stop_market", "sell" if side == "buy" else "buy",
-                    amount=amount,
-                    params={"stopPrice": sl_price,
-                            "reduceOnly": True, "tdMode": "isolated"}
-                )
-                logger.info(f"  止盈={tp_price} 止损={sl_price}")
-            except Exception as e:
-                logger.warning(f"止盈止损设置失败: {e}")
-
-            return True
-        except Exception as e:
-            logger.error(f"下单失败: {e}")
+        )
+        if not result.ok:
+            logger.error(f"下单失败: {result.reason}")
+            self._paused_reason = f"order_failed:{result.reason}"
             return False
+
+        filled_size = self._order_filled_amount(result.entry, float(size))
+        fill_price = self._order_average_price(result.entry, float(entry))
+        live_notional = filled_size * fill_price
+        self._position = {
+            **signal,
+            "entry": fill_price,
+            "size": filled_size,
+            "notional": live_notional,
+            "raw_notional": sizing.raw_notional,
+            "max_notional": sizing.max_notional,
+            "capped": sizing.capped or notional < sizing.notional,
+            "entry_order_id": self._order_id(result.entry),
+            "entry_order": self._order_snapshot(result.entry),
+            "entry_fee": self._order_fee(result.entry),
+            "protective_orders": {
+                "take_profit": self._order_id(result.take_profit),
+                "stop_loss": self._order_id(result.stop_loss),
+            },
+            "protective_order_details": {
+                "take_profit": self._order_snapshot(result.take_profit),
+                "stop_loss": self._order_snapshot(result.stop_loss),
+            },
+            "opened_at": str(datetime.now(timezone.utc)),
+            "live": True,
+        }
+        self._save_state()
+
+        logger.info(
+            f"📈 下单: {side} {amount}张 @{entry_price} "
+            f"名义={notional:.1f}U"
+            f"{' capped' if sizing.capped or notional < sizing.notional else ''}"
+        )
+        logger.info(f"  止盈={tp_price} 止损={sl_price}")
+        return True
 
     # ═══════════════════════
     # 主循环
@@ -684,13 +1068,9 @@ class ProductionBot:
         self._load_state()
         self.set_leverage()
 
-        # 检查现有持仓
         if not self.dry_run:
-            pos = self.get_position()
-            if pos:
-                side = pos.get("side", "?")
-                contracts = pos.get("contracts", 0)
-                logger.info(f"⚠️ 检测到现有持仓: {side} {contracts}张, 请手动处理")
+            price = float(self._ohlcv["close"][-1])
+            if not self._reconcile_live_state(price):
                 return
 
         self._running = True
@@ -705,6 +1085,8 @@ class ProductionBot:
             f"EMA200={ind['ema200'][-1]:.0f} ADX={ind['adx'][-1]:.0f}"
         )
         logger.info(f"   牛熊: {'🐂牛市' if c > ind['ema200'][-1] else '🐻熊市'}")
+        if self.dry_run:
+            self._reconcile_live_state(float(c))
         self._update_portfolio_plan()
         self._write_account_snapshot(float(c))
 
@@ -798,7 +1180,7 @@ class ProductionBot:
                 self.stop()
                 break
             except Exception as e:
-                logger.error(f"主循环异常: {e}")
+                self._record_api_failure("main_loop_error", e)
                 time.sleep(60)
 
     def _check_exit_conditions(self, latest):
@@ -843,6 +1225,13 @@ class ProductionBot:
         pos = self._position
         if not pos: return
 
+        live_close = None
+        if not self.dry_run:
+            live_close = self._execute_live_close(reason, price)
+            if live_close is None:
+                return
+            price = float(live_close["exit_price"])
+
         notional = pos.get("notional", self.initial_capital * self.leverage)
         if pos["side"] == "long":
             pnl_usdt = notional * (price / pos["entry"] - 1)
@@ -869,6 +1258,25 @@ class ProductionBot:
             "reason": reason,
             "time": str(datetime.now(timezone.utc)),
         }
+        if live_close:
+            entry_fee = pos.get("entry_fee") or {"cost": 0.0, "currency": ""}
+            close_fee = live_close["close_fee"]
+            trade.update({
+                "close_order_id": live_close["close_order_id"],
+                "close_order": live_close["close_order"],
+                "exchange_already_flat": live_close["exchange_already_flat"],
+                "filled_size": live_close["filled_size"],
+                "entry_order_id": pos.get("entry_order_id"),
+                "entry_order": pos.get("entry_order"),
+                "entry_fee": entry_fee,
+                "close_fee": close_fee,
+                "total_fee": round(
+                    float(entry_fee.get("cost", 0.0) or 0.0)
+                    + float(close_fee.get("cost", 0.0) or 0.0),
+                    8,
+                ),
+                "protective_orders": pos.get("protective_orders"),
+            })
         self._trade_log.append(trade)
         self._position = None
 
@@ -929,6 +1337,10 @@ def run_bot(config_path: str = "config/production.yaml"):
         max_notional_pct=cfg["risk"].get("max_notional_pct", 0.95),
         portfolio_config=load_portfolio_config(cfg.get("portfolio")),
         state_file=cfg.get("output", {}).get("state_file", "outputs/production_state.json"),
+        max_api_errors=int(cfg.get("live", {}).get("max_api_errors", 3)),
+        alert_manager=LocalAlertManager(
+            cfg.get("output", {}).get("alert_log", "outputs/alerts.jsonl")
+        ),
         **strategy_cfg,
     )
 

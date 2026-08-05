@@ -1,0 +1,77 @@
+# OKX 模拟盘 testnet_live 示例配置
+# 使用前必须配置 OKX Demo API Key，并先运行:
+#   .venv/bin/python scripts/okx_preflight.py --config config/testnet_live.yaml
+
+symbol: "BTC/USDT"
+timeframe: "4h"
+market_type: "swap"
+
+strategy:
+  name: "triple_ema"
+  ema_fast: 10
+  ema_mid: 20
+  ema_slow: 50
+  ema_trend: 200
+  adx_period: 14
+  adx_threshold: 20
+  ema_slope_lookback: 3
+  min_ema_spread: 0.003
+  min_atr_percentile: 0
+  atr_percentile_window: 180
+  atr_period: 14
+  sl_atr_mult: 1.5
+  tp_atr_mult: 3.0
+  cooldown_base: 6
+  cooldown_extra_per_loss: 3
+
+risk:
+  initial_capital: 100
+  leverage: 2
+  risk_per_trade: 0.01
+  max_notional_pct: 0.50
+  max_daily_loss_pct: 0.03
+  max_consecutive_losses: 3
+  loss_pause_bars: 18
+
+portfolio:
+  enabled: true
+  mode: "testnet_live"
+  core_weights:
+    strong_bull: 0.60
+    bull: 0.45
+    neutral: 0.25
+    bear: 0.05
+  swing_limits:
+    strong_bull: {long: 0.10, short: 0.00}
+    bull: {long: 0.10, short: 0.00}
+    neutral: {long: 0.08, short: 0.05}
+    bear: {long: 0.05, short: 0.08}
+  rebalance_threshold: 0.05
+  bear_rebalance_threshold: 0.01
+  urgent_drop_pct: 0.04
+  core_buy_step: 0.20
+  core_sell_step: 0.20
+  urgent_sell_step: 0.50
+  spot_fee: 0.001
+  max_net_exposure: 0.30
+  max_gross_exposure: 0.50
+  max_short_exposure: 0.10
+  max_order_notional_usdt: 10
+  min_order_notional_usdt: 5
+  allow_spot_trading: false
+  allow_swap_trading: false
+
+mode:
+  dry_run: false
+  testnet: true
+  log_level: "INFO"
+  heartbeat_minutes: 15
+
+live:
+  max_api_errors: 3
+
+output:
+  trade_log: "outputs/testnet_live_trades.json"
+  log_file: "outputs/testnet_live.log"
+  alert_log: "outputs/testnet_live_alerts.jsonl"
+  state_file: "outputs/testnet_live_state.json"

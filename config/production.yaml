@@ -34,7 +34,7 @@ risk:
 
 portfolio:
   enabled: true               # 启用组合级核心仓/卫星仓风控
-  mode: "paper"               # paper=只记录计划; live 模式需先补成交确认后再开放
+  mode: "paper"               # paper/readonly/testnet_live/live_small/live_scaled
   core_weights:
     strong_bull: 0.60         # 强牛: BTC 核心仓 60%
     bull: 0.45                # 牛市: BTC 核心仓 45%
@@ -55,6 +55,10 @@ portfolio:
   max_net_exposure: 0.90      # 组合净 BTC 敞口上限
   max_gross_exposure: 1.20    # 组合总名义敞口上限
   max_short_exposure: 0.30    # 组合净空头敞口上限
+  max_order_notional_usdt: 20 # readonly/live 小额阶段单笔计划上限
+  min_order_notional_usdt: 5  # 低于该金额不生成实盘订单计划
+  allow_spot_trading: false   # 现货真实下单硬开关，默认关闭
+  allow_swap_trading: false   # 合约真实下单硬开关，默认关闭
 
 mode:
   dry_run: true               # 纸上交易模式 (只看不下单)
@@ -62,7 +66,11 @@ mode:
   log_level: "INFO"           # DEBUG / INFO / WARNING
   heartbeat_minutes: 15       # 巡检间隔 (分钟)
 
+live:
+  max_api_errors: 3           # 连续 API 错误达到上限后暂停交易
+
 output:
   trade_log: "outputs/production_trades.json"
   log_file: "outputs/production.log"
+  alert_log: "outputs/alerts.jsonl"
   state_file: "outputs/production_state.json"

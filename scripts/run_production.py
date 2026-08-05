@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import argparse
 from src.live.production_bot import run_bot
+from scripts.okx_preflight import run_preflight
 
 
 def main():
@@ -33,6 +34,10 @@ def main():
                         help="纸上交易模式 (只看不下单)")
     parser.add_argument("--live", action="store_true",
                         help="⚠️ 实盘模式 (真金白银!)")
+    parser.add_argument("--skip-preflight", action="store_true",
+                        help="跳过非 dry-run 启动前检查")
+    parser.add_argument("--allow-existing-state", action="store_true",
+                        help="preflight 允许交易所有仓位，前提是本地状态可恢复")
     args = parser.parse_args()
 
     config_path = args.config
@@ -70,6 +75,22 @@ def main():
         except (KeyboardInterrupt, EOFError):
             print("\n已取消")
             return
+
+    import yaml
+    with open(config_path) as f:
+        final_cfg = yaml.safe_load(f)
+    if not final_cfg.get("mode", {}).get("dry_run", True):
+        if args.skip_preflight:
+            print("⚠️ 已跳过 preflight，请确认这是有意操作")
+        else:
+            print("🔎 执行 OKX preflight...")
+            code = run_preflight(
+                config_path=config_path,
+                allow_existing_state=args.allow_existing_state,
+            )
+            if code != 0:
+                print("⛔ preflight 未通过，拒绝启动非 dry-run")
+                return
 
     run_bot(config_path)
 
