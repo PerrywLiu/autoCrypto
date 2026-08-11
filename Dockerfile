@@ -23,6 +23,7 @@ RUN uv sync --frozen --no-dev
 COPY src/ ./src/
 COPY scripts/ ./scripts/
 COPY config/ ./config/
+COPY tests/ ./tests/
 COPY main.py ./
 
 # 输出目录
