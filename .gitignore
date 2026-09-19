@@ -33,3 +33,26 @@ Thumbs.db
 # 日志
 *.log
 task/
+
+# 测试 / 类型检查 / 覆盖率缓存
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+
+# 数据库 / 本地状态
+*.db
+*.sqlite3
+*.sqlite
+
+# 环境变量变体（保留示例模板）
+.env.*
+!.env.example
+
+# AI 助手 / 工具本地工作区配置
+.serena/
+.claude/
