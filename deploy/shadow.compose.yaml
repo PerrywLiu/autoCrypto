@@ -1,0 +1,32 @@
+services:
+  shadow:
+    image: autocrypto-shadow:20261014
+    container_name: autocrypto-shadow
+    restart: unless-stopped
+    command: [".venv/bin/python", "scripts/run_shadow.py", "--source-directory", "/source", "--directory", "/shadow", "--interval", "60"]
+    read_only: true
+    environment:
+      TZ: UTC
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - /root/work/autoCrypto/outputs:/source/outputs:ro
+      - /root/work/autoCrypto/config:/source/config:ro
+      - /root/work/autocrypto-shadow/data:/shadow
+    tmpfs:
+      - /tmp:size=32m
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+    healthcheck:
+      test: ["CMD", ".venv/bin/python", "-c", "import json,datetime; p=json.load(open('/shadow/shadow_status.json')); age=(datetime.datetime.now(datetime.timezone.utc)-datetime.datetime.fromisoformat(p['checked_at'])).total_seconds(); assert 0<=age<180 and not p['poll_error'] and p['comparison_validated']"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
