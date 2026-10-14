@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#080d16">
+  <title>交易总览 · autoCrypto</title>
+  <style>
+    :root { color-scheme: dark; --bg:#080d16; --side:#0d1420; --card:#111a29; --raised:#172234; --line:#28394d; --text:#f3f7fb; --muted:#a9b8ca; --subtle:#879bb2; --green:#4bd5a0; --red:#ff8293; --amber:#efc374; font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei","Noto Sans CJK SC",sans-serif; }
+    * { box-sizing:border-box; }
+    html { scroll-behavior:smooth; }
+    body { margin:0; background:var(--bg); color:var(--text); font-size:16px; font-weight:400; line-height:1.5; }
+    h1,h2,h3,strong,th { font-weight:500; }
+    a { color:inherit; text-decoration:none; }
+    button { font:inherit; }
+    a:focus-visible,button:focus-visible { outline:2px solid var(--green); outline-offset:3px; }
+    .shell { display:grid; grid-template-columns:226px minmax(0,1fr); min-height:100vh; }
+    .sidebar { position:sticky; top:0; align-self:start; height:100vh; overflow-y:auto; padding:30px 18px; background:var(--side); border-right:1px solid var(--line); display:flex; flex-direction:column; gap:37px; }
+    .brand { display:flex; align-items:center; gap:11px; padding:0 10px; font-size:20px; font-weight:600; letter-spacing:-.025em; white-space:nowrap; }
+    .brand-mark { display:grid; place-items:center; width:32px; height:32px; border-radius:9px; background:var(--green); color:#061411; font-weight:600; }
+    .brand em { font-style:normal; color:var(--green); }
+    .nav-label,.eyebrow { color:var(--subtle); font-size:11px; font-weight:500; letter-spacing:.1em; text-transform:uppercase; }
+    .nav-label { margin:0 13px 10px; }
+    nav { display:grid; gap:5px; }
+    nav a { min-height:44px; display:flex; align-items:center; gap:11px; padding:9px 13px; color:var(--muted); border-radius:10px; font-size:14px; transition:background .2s,color .2s; }
+    nav a:hover,nav a.active { color:var(--text); background:var(--raised); }
+    nav a.active { box-shadow:inset 3px 0 var(--green); font-weight:500; }
+    nav svg { width:17px; height:17px; flex:none; }
+    .side-note { margin-top:auto; padding:16px; border:1px solid var(--line); border-radius:13px; background:var(--card); font-size:13px; color:var(--muted); }
+    .side-note strong { color:var(--text); display:flex; align-items:center; gap:9px; font-size:14px; }
+    .side-note p { margin:8px 0 0; }
+    .dot { width:8px; height:8px; border-radius:50%; background:var(--green); box-shadow:0 0 0 4px #4bd5a01a; display:inline-block; flex:none; }
+    main { width:min(100%,1530px); min-width:0; margin:0 auto; padding:34px clamp(22px,3vw,48px) 45px; }
+    .topbar,.top-actions,.section-head,.panel-head,.history-head { display:flex; justify-content:space-between; align-items:center; gap:16px; }
+    .topbar { margin-bottom:27px; }
+    h1,h2,h3,p { margin-top:0; }
+    h1 { font-size:clamp(28px,2.5vw,37px); letter-spacing:-.02em; line-height:1.2; margin:5px 0 7px; }
+    .subtitle { color:var(--muted); font-size:14px; margin:0; }
+    .status-pill { display:flex; align-items:center; gap:10px; padding:9px 13px; border-radius:999px; border:1px solid #30665b; background:#13342f; color:#b9f4dc; font-size:13px; font-weight:500; white-space:nowrap; }
+    .status-pill.warning { border-color:#796338; background:#3b3028; color:var(--amber); }
+    .status-pill.warning .dot { background:var(--amber); box-shadow:none; }
+    .refresh { display:grid; place-items:center; min-width:44px; min-height:44px; cursor:pointer; border:1px solid var(--line); border-radius:11px; background:var(--card); color:var(--muted); transition:color .2s,background .2s; }
+    .refresh:hover { background:var(--raised); color:var(--text); }
+    .refresh:disabled { opacity:.6; cursor:wait; }
+    .refresh svg { width:19px; height:19px; }
+    .error { display:none; padding:11px 15px; margin-bottom:16px; border:1px solid #874454; border-radius:11px; color:#ffd3d8; background:#41232c; }
+    .card { min-width:0; background:var(--card); border:1px solid var(--line); border-radius:17px; box-shadow:0 14px 36px #00000017; }
+    .market { display:grid; grid-template-columns:minmax(250px,.75fr) minmax(0,1.25fr); margin-bottom:18px; overflow:hidden; }
+    .market-info { padding:27px 30px; display:flex; flex-direction:column; justify-content:space-between; gap:27px; }
+    .pair { color:var(--muted); font-size:14px; margin-top:8px; }
+    .pair strong { color:var(--text); font-size:17px; margin-right:8px; }
+    .price { font-size:clamp(38px,4.5vw,64px); letter-spacing:-.04em; line-height:1.05; font-weight:500; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .price small { color:var(--subtle); font-size:15px; letter-spacing:0; font-weight:400; margin-left:7px; }
+    .change { display:inline-block; margin-top:15px; padding:6px 10px; color:var(--green); background:#174038; border-radius:8px; font-size:14px; font-weight:500; font-variant-numeric:tabular-nums; }
+    .change.down { color:var(--red); background:#442630; } .change.neutral { color:var(--muted); background:var(--raised); }
+    .micro { color:var(--subtle); font-size:12px; }
+    .chart-wrap { min-width:0; display:flex; flex-direction:column; padding:23px 25px 18px 0; }
+    .chart-title,.chart-times { display:flex; justify-content:space-between; gap:12px; font-size:12px; color:var(--subtle); }
+    .chart-title strong { color:var(--text); font-size:13px; }
+    #chart { width:100%; height:205px; margin-top:12px; }
+    .gridline { stroke:#304154; stroke-width:1; stroke-dasharray:3 7; }
+    .chart-line { fill:none; stroke:var(--green); stroke-width:3; stroke-linecap:round; stroke-linejoin:round; }
+    .chart-area { fill:url(#fill); }
+    .section-head { margin:28px 0 13px; align-items:end; }
+    #overview,#equity-history,#holdings,#history { scroll-margin-top:24px; }
+    .section-head h2 { margin:0; font-size:18px; letter-spacing:-.02em; }
+    .section-head span { color:var(--subtle); font-size:12px; }
+    .kpis { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; }
+    .kpi { padding:19px 20px; }
+    .kpi .label,.main-label { color:var(--muted); font-size:13px; }
+    .kpi .value { font-size:clamp(23px,2.35vw,31px); font-weight:500; letter-spacing:-.025em; margin:9px 0 1px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .kpi .caption { color:var(--subtle); font-size:11px; }
+    .equity-panel { padding:23px 26px 20px; margin-bottom:18px; }
+    .equity-head { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; flex-wrap:wrap; }
+    .equity-head h3 { font-size:17px; margin:0 0 4px; }
+    .equity-head p,.equity-note { color:var(--subtle); font-size:12px; margin:0; }
+    .range-controls { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+    .range-controls button,.custom-start input { min-height:44px; border:1px solid var(--line); border-radius:9px; background:var(--raised); color:var(--muted); padding:8px 13px; }
+    .range-controls button { cursor:pointer; }
+    .range-controls button[aria-pressed="true"] { background:#174038; color:var(--green); border-color:#30665b; }
+    .custom-start { display:flex; align-items:center; gap:7px; flex-wrap:wrap; color:var(--muted); font-size:12px; }
+    .custom-start[hidden] { display:none; }
+    .custom-start input { color:var(--text); font:inherit; color-scheme:dark; }
+    .equity-summary { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:15px; margin:18px 0 0; }
+    .equity-summary > div { min-width:0; padding:16px 18px; border:1px solid var(--line); border-radius:12px; background:var(--raised); }
+    .equity-summary strong { font-size:29px; font-variant-numeric:tabular-nums; letter-spacing:-.025em; }
+    .metric-label { color:var(--muted); font-size:12px; margin-bottom:4px; }
+    .period-figures { display:flex; align-items:baseline; flex-wrap:wrap; gap:8px; }
+    .period-figures span { font-size:15px; font-weight:500; font-variant-numeric:tabular-nums; }
+    .period-basis { color:var(--subtle); font-size:12px; margin-top:3px; overflow-wrap:anywhere; }
+    .equity-breakdown { color:var(--muted); font-size:12px; }
+    #equity-chart { display:block; width:100%; height:260px; margin-top:10px; }
+    .axis-label { fill:var(--subtle); font:12px Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    .equity-note { margin-top:8px; min-height:19px; }
+    .holdings { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+    .holding { padding:24px; }
+    .panel-head { align-items:flex-start; margin-bottom:23px; }
+    .panel-head h3 { margin:4px 0 4px; font-size:19px; letter-spacing:-.025em; }
+    .panel-head p { margin:0; color:var(--subtle); font-size:12px; }
+    .badge { padding:5px 9px; border-radius:7px; background:var(--raised); color:var(--muted); font-size:12px; font-weight:500; white-space:nowrap; }
+    .badge.green { color:var(--green); background:#174038; } .badge.amber { color:var(--amber); background:#3b3028; }
+    .headline { display:flex; align-items:end; justify-content:space-between; gap:12px; margin-bottom:19px; }
+    .headline .big { font-size:clamp(27px,2.9vw,38px); font-weight:500; letter-spacing:-.025em; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .headline .aside { text-align:right; color:var(--muted); font-size:12px; white-space:nowrap; }
+    .headline .aside strong { display:block; color:var(--text); font-size:17px; }
+    .bar { height:8px; border-radius:99px; background:#27394c; overflow:hidden; }
+    .bar div { height:100%; width:0; border-radius:inherit; background:var(--green); transition:width .35s ease; }
+    .bar-scale { display:flex; justify-content:space-between; color:var(--subtle); font-size:11px; margin-top:7px; }
+    .details { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px 12px; border-top:1px solid var(--line); padding-top:17px; margin:17px 0 0; }
+    .details dt { color:var(--subtle); font-size:12px; } .details dd { margin:3px 0 0; font-size:15px; font-weight:500; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+    .empty-position { padding:13px 15px; margin-bottom:17px; color:var(--muted); background:#142435; border:1px dashed #3d596e; border-radius:10px; font-size:13px; }
+    .empty-position strong { display:block; color:var(--text); font-size:14px; margin-bottom:3px; }
+    .history { overflow:hidden; }
+    .history-head { padding:20px 24px; border-bottom:1px solid var(--line); }
+    .history-head h3 { margin:0 0 3px; font-size:17px; }
+    .history-head p { color:var(--subtle); font-size:12px; margin:0; }
+    .table-scroll { overflow-x:auto; }
+    table { width:100%; min-width:760px; border-collapse:collapse; text-align:left; font-size:13px; }
+    th,td { padding:13px 21px; border-bottom:1px solid var(--line); white-space:nowrap; }
+    th { color:var(--subtle); font-size:11px; letter-spacing:.06em; text-transform:uppercase; }
+    td { color:var(--muted); font-variant-numeric:tabular-nums; }
+    tbody tr:hover { background:var(--raised); } tbody tr:last-child td { border-bottom:0; }
+    .trade-empty { padding:43px 20px; text-align:center; color:var(--muted); font-size:13px; }
+    .trade-empty svg { width:31px; height:31px; color:var(--subtle); margin-bottom:10px; }
+    .trade-empty strong { color:var(--text); display:block; font-size:15px; margin-bottom:4px; }
+    .trade-empty p { margin:0; }
+    .performance { margin:0 0 16px; } .performance-note { color:var(--subtle); font-size:12px; margin:10px 0 0; }
+    .trade-detail td { padding:0 21px 15px; white-space:normal; } .trade-detail details { border:1px solid var(--line); border-radius:9px; padding:10px 14px; }
+    .trade-detail summary { cursor:pointer; color:var(--green); min-height:28px; } .trade-detail p { margin:10px 0 0; color:var(--muted); max-width:min(1000px,calc(100vw - 105px)); }
+    .positive { color:var(--green)!important; } .negative { color:var(--red)!important; }
+    footer { display:flex; justify-content:space-between; gap:12px; margin-top:23px; font-size:11px; color:var(--subtle); }
+    @media (max-width:1100px) { .shell { grid-template-columns:190px minmax(0,1fr); } .kpis { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+    @media (max-width:850px) { .shell { display:block; } .sidebar { display:block; height:auto; overflow:visible; padding:15px 22px; border-right:0; border-bottom:1px solid var(--line); z-index:10; } .brand { padding:0; } .nav-label,.side-note { display:none; } nav { display:flex; overflow-x:auto; gap:4px; margin-top:12px; } nav a { white-space:nowrap; } #overview,#equity-history,#holdings,#history { scroll-margin-top:112px; } main { padding:26px 22px 40px; } .market { grid-template-columns:1fr; } .market-info { gap:15px; } .chart-wrap { padding:0 25px 18px; } }
+    @media (max-width:600px) { .sidebar { padding:13px 16px; } main { padding:23px 16px 35px; } .topbar { align-items:flex-start; } .top-actions { gap:7px; } .status-pill { font-size:0; min-height:44px; padding:12px; } .market-info { padding:22px 20px 10px; } .price { font-size:41px; } #chart { height:155px; } .equity-summary { grid-template-columns:1fr; } .kpis,.holdings { grid-template-columns:1fr; } .kpis { gap:10px; } .kpi { padding:16px 18px; } .kpi .value { margin-top:4px; } .holding { padding:20px; } footer { display:block; } footer span { display:block; margin:4px 0; } }
+    @media (prefers-reduced-motion:reduce) { html { scroll-behavior:auto; } *,*::before,*::after { transition-duration:0s!important; animation-duration:0s!important; } }
+  </style>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar" aria-label="侧边栏">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">a</span><span>auto<em>Crypto</em></span></div>
+    <div><div class="nav-label">工作台</div><nav aria-label="页面导航">
+      <a class="active" href="#overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/></svg>交易总览</a>
+      <a href="#equity-history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 18l5-5 4 2 5-8 4 2"/><path d="M3 21h18"/></svg>权益曲线</a>
+      <a href="#holdings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 17l6-6 4 4 8-8"/><path d="M16 7h5v5"/></svg>持仓概览</a>
+      <a href="#history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 5h16M4 10h16M4 15h16M4 20h10"/></svg>交易记录</a>
+    </nav></div>
+    <div class="side-note"><strong><span class="dot" aria-hidden="true"></span>纸面交易</strong><p>所有交易均为本地模拟，不向 OKX 发送订单。</p></div>
+  </aside>
+  <main id="overview">
+    <header class="topbar"><div><div class="eyebrow">Portfolio overview</div><h1>交易总览</h1><p class="subtitle">现货核心仓与 Triple EMA 合约策略的模拟运行状态</p></div><div class="top-actions"><span class="status-pill warning" id="bot-pill" role="status"><span class="dot" aria-hidden="true"></span><span id="bot-status">状态待验证</span></span><button class="refresh" id="refresh" type="button" aria-label="立即刷新数据" title="立即刷新数据"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2 6"/><path d="M20 4v7h-7"/></svg></button></div></header>
+    <div class="error" id="error" role="alert"></div><p class="micro" id="bot-detail" role="status">等待机器人心跳与策略状态…</p>
+    <div class="section-head" id="equity-history"><h2>账户权益曲线</h2><span>每分钟记录一次纸面账户估值</span></div>
+    <section class="card equity-panel" aria-labelledby="equity-heading"><div class="equity-head"><div><h3 id="equity-heading">当前仓位价值</h3><p>现金 + BTC 现货市值 + 策略累计盈亏</p></div><div class="range-controls" role="group" aria-label="权益曲线时间范围"><button type="button" data-range="1d" aria-pressed="true">1 天</button><button type="button" data-range="7d" aria-pressed="false">7 天</button><button type="button" data-range="30d" aria-pressed="false">30 天</button><button type="button" data-range="custom" aria-pressed="false">自定义</button><div class="custom-start" id="custom-start" hidden><label for="equity-start">起始时间</label><input id="equity-start" type="datetime-local"><label for="equity-end">结束时间</label><input id="equity-end" type="datetime-local" aria-describedby="equity-end-hint"><span id="equity-end-hint">留空为现在</span><button id="apply-range" type="button">应用</button></div></div></div><div class="equity-summary"><div><div class="metric-label">当前账户权益</div><strong id="equity-total">—</strong><div class="equity-breakdown" id="equity-breakdown">正在计算账户价值…</div></div><div><div class="metric-label">所选时段收益</div><div class="period-figures"><strong id="period-pnl">—</strong><span id="period-rate">—</span></div><div class="period-basis" id="period-basis">正在读取所选时段采样…</div></div></div><svg id="equity-chart" viewBox="0 0 900 260" preserveAspectRatio="none" role="img" aria-label="纸面账户权益曲线"><path class="gridline" d="M65 35H880 M65 130H880 M65 225H880"/><text id="equity-axis-high" class="axis-label" x="4" y="39"></text><text id="equity-axis-low" class="axis-label" x="4" y="229"></text><path id="equity-path" class="chart-line" stroke="#4bd5a0"/><circle id="equity-dot" r="5" fill="#4bd5a0" style="display:none"/></svg><div class="chart-times"><span id="equity-from">—</span><span id="equity-to">—</span></div><p class="equity-note" id="equity-note" role="status">正在读取历史采样…</p></section>
+    <section class="card market" aria-label="BTC 市场行情">
+      <div class="market-info"><div><div class="eyebrow">市场行情</div><div class="pair"><strong>BTC / USDT</strong>永续合约 · OKX</div></div><div><div class="price"><span id="price">—</span><small>USDT</small></div><span class="change neutral" id="change">24H —</span></div><div class="micro" id="market-time">正在读取行情…</div></div>
+      <div class="chart-wrap"><div class="chart-title"><strong>价格走势</strong><span>近 24 小时 · 1 小时 K 线收盘价</span></div><svg id="chart" viewBox="0 0 900 250" preserveAspectRatio="none" role="img" aria-label="BTC 近 24 小时价格走势"><defs><linearGradient id="fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#4bd5a0" stop-opacity=".22"/><stop offset="100%" stop-color="#4bd5a0" stop-opacity="0"/></linearGradient></defs><path class="gridline" d="M0 32H900 M0 125H900 M0 218H900"/><path id="chart-area" class="chart-area"/><path id="chart-line" class="chart-line"/><circle id="chart-dot" r="5" fill="#4bd5a0" style="display:none"/></svg><div class="chart-times"><span>24 小时前</span><span>现在</span></div></div>
+    </section>
+    <div class="section-head"><h2>账户概览</h2><span>现货与合约策略共用一个纸面账户</span></div>
+    <section class="kpis" aria-label="账户关键指标"><div class="card kpi"><div class="label">初始资金</div><div class="value" id="initial">—</div><div class="caption">USDT · 模拟账户起始值</div></div><div class="card kpi"><div class="label">当前权益</div><div class="value" id="equity">—</div><div class="caption" id="equity-delta">相对初始资金 —</div></div><div class="card kpi"><div class="label">可用模拟现金</div><div class="value" id="cash">—</div><div class="caption">USDT · 现货调仓后余额</div></div><div class="card kpi"><div class="label">组合净敞口</div><div class="value" id="exposure">—</div><div class="caption">现货与策略仓位合计</div></div></section>
+    <div class="section-head" id="holdings"><h2>持仓概览</h2><span>两套策略分别展示</span></div>
+    <div class="holdings">
+      <section class="card holding" aria-labelledby="spot-heading"><div class="panel-head"><div><div class="eyebrow">Core allocation</div><h3 id="spot-heading">BTC 现货核心仓</h3><p>按市场状态调整目标权重</p></div><span class="badge green">现货持有</span></div><div class="headline"><div><div class="main-label">当前市值</div><div class="big" id="core-value">—</div></div><div class="aside">账户占比<strong id="core-weight">—</strong></div></div><div class="bar" role="img" aria-label="现货占账户权益比例"><div id="core-bar"></div></div><div class="bar-scale"><span>0%</span><span>100%</span></div><dl class="details"><div><dt>持有数量</dt><dd id="core">—</dd></div><div><dt>仓位类型</dt><dd>BTC / USDT 现货</dd></div></dl></section>
+      <section class="card holding" aria-labelledby="strategy-heading"><div class="panel-head"><div><div class="eyebrow">Satellite strategy</div><h3 id="strategy-heading">Triple EMA 策略</h3><p id="strategy-name">BTC/USDT · 4h 永续合约</p></div><span class="badge amber" id="strategy-badge">等待信号</span></div><div class="empty-position" id="strategy-empty"><strong>策略正在观察市场</strong>当前没有合约仓位。满足信号和风控条件后，这里会显示模拟持仓。</div><div class="headline"><div><div class="main-label">当前策略仓位</div><div class="big" id="strategy-status">无持仓</div></div><div class="aside">设定杠杆<strong id="leverage">—</strong></div></div><dl class="details"><div><dt>杠杆使用</dt><dd id="active-leverage">—</dd></div><div><dt>方向</dt><dd id="side">—</dd></div><div><dt>入场价</dt><dd id="entry">—</dd></div><div><dt>名义仓位</dt><dd id="notional">—</dd></div><div><dt>止盈价</dt><dd id="take-profit">—</dd></div><div><dt>止损价</dt><dd id="stop-loss">—</dd></div></dl></section>
+    </div>
+    <div class="section-head" id="history"><h2>持仓与交易记录</h2><span>当前持仓、现货调仓与合约平仓 · 北京时间</span></div>
+    <section class="performance" aria-label="整体收益分析"><div class="kpis"><div class="card kpi"><div class="label">累计账户收益</div><div class="value" id="total-pnl">—</div><div class="caption" id="total-return">相对初始资金；含持仓价格变化</div></div><div class="card kpi"><div class="label">今日账户权益变化</div><div class="value" id="today-pnl">—</div><div class="caption" id="today-basis">北京时间今日首条采样至最新估值</div></div><div class="card kpi"><div class="label">合约已实现盈亏</div><div class="value" id="realized-pnl">—</div><div class="caption">沿用账户记账值；合约费用未完整计入</div></div><div class="card kpi"><div class="label">已记录现货调仓手续费</div><div class="value" id="spot-fees">—</div><div class="caption">已在账户现金扣除，不再重复扣减收益</div></div></div><p class="performance-note">现货调仓不等于全部平仓；旧仓成本和历史费用不完整，现货已实现利润无法完整还原。手续费仅汇总有记录的成交。</p></section>
+    <section class="card history" aria-labelledby="history-heading"><div class="history-head"><div><h3 id="history-heading">账户活动</h3><p>当前持仓为快照；更新后记录现货模拟成交，旧版调仓明细无法完整还原</p></div><span class="badge" id="trade-count">0 条记录</span></div><div class="table-scroll" id="trade-table" hidden><table><thead><tr><th>类型</th><th>状态</th><th>方向</th><th>价格</th><th>规模</th><th>盈亏</th><th>费用</th><th>时间</th></tr></thead><tbody id="trades"></tbody></table></div><div class="trade-empty" id="trade-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 5h16M4 10h16M4 15h10"/><circle cx="17" cy="17" r="4"/><path d="M17 15v2h2"/></svg><strong>暂无持仓或已平仓交易</strong><p>出现持仓或完成模拟策略交易后，会在这里显示。</p></div></section>
+    <footer><span id="bot-time">等待机器人状态…</span><span>纸面交易 · 数据仅供策略验证</span></footer>
+  </main>
+</div>
+<script>
+  const $ = id => document.getElementById(id);
+  const fmt = (v, d=2) => v == null || !Number.isFinite(Number(v)) ? '—' : Number(v).toLocaleString('zh-CN',{minimumFractionDigits:d,maximumFractionDigits:d});
+  const date = v => { if (!v) return '—'; const t = new Date(/^\d+$/.test(String(v)) ? Number(v) : v); return Number.isNaN(t.getTime()) ? '—' : t.toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'}); };
+  const set = (id,v) => { $(id).textContent = v; };
+  function draw(points) {
+    const a = (points || []).map(x => Number(x.close)).filter(Number.isFinite);
+    if (a.length < 2) { $('chart-line').setAttribute('d',''); $('chart-area').setAttribute('d',''); $('chart-dot').style.display='none'; return; }
+    const lo=Math.min(...a), hi=Math.max(...a), spread=Math.max(hi-lo,hi*.002);
+    const xy=a.map((v,i)=>[i*900/(a.length-1),218-(v-lo+spread*.1)*174/(spread*1.2)]);
+    const path=xy.map(([x,y],i)=>`${i?'L':'M'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ');
+    $('chart-line').setAttribute('d',path); $('chart-area').setAttribute('d',`${path} L900 250 L0 250 Z`);
+    const [x,y]=xy[xy.length-1]; $('chart-dot').setAttribute('cx',x); $('chart-dot').setAttribute('cy',y); $('chart-dot').style.display='';
+    const color=a[a.length-1]>=a[0]?'var(--green)':'var(--red)'; $('chart-line').style.stroke=color; $('chart-dot').style.fill=color;
+  }
+  const expandedTrades = new Set();
+  const signed = v => v == null ? '—' : `${v>=0?'+':''}${fmt(v)}`;
+  function tradeDetails(item) {
+    const lines=[];
+    const reasons={slow_add:'按目标权重加仓',urgent_reduce:'触发紧急减仓',normal_reduce:'按目标权重减仓',SL:'止损退出',TP:'止盈退出','趋势反转':'均线排列变化，趋势反转退出',long_conditions_met:'价格高于 EMA200，短期均线多头排列且斜率向上',short_conditions_met:'价格低于 EMA200，短期均线空头排列且斜率向下'};
+    const regimes={strong_bull:'强牛',bull:'牛市',neutral:'中性',bear:'熊市'};
+    if(item.kind==='spot_trade') {
+      const a=item.analysis;
+      if(a) {
+        lines.push(`成交原因：${reasons[a.reason]||a.reason||'未记录'}。市场分类：${regimes[a.regime]||a.regime||'未记录'}；调仓前权重 ${fmt(a.weight_before*100,1)}%，目标 ${fmt(a.target_weight*100,1)}%，本次计划调整至 ${fmt(a.planned_weight*100,1)}%。`);
+        lines.push(`触发指标：本根 K 线涨跌 ${signed(a.bar_return*100)}%；收盘 ${fmt(a.close)}，EMA200 ${fmt(a.ema200)}。${a.urgent?`紧急触发依据：${[a.regime==='bear'?'市场分类为熊市':null,a.below_ema200?'价格跌破 EMA200':null,a.sharp_drop?'单根跌幅达到减仓阈值':null].filter(Boolean).join('、')||'未记录'}。`:''}`);
+      } else lines.push('历史记录未保存当时的市场分类和触发指标，无法完整还原逐笔原因。');
+      lines.push(`现货成交手续费 ${fmt(item.fee,4)} USDT。原有持仓买入成本不完整，不能据此计算该笔已实现利润，也不能将卖出与买入金额差当作收益。`);
+    } else if(item.kind==='strategy_close') {
+      lines.push(`退出原因：${reasons[item.reason]||item.reason||'未记录'}。该笔记录盈亏 ${signed(item.pnl)} USDT；合约手续费、资金费未完整计入，无法确认净收益。`);
+      if(item.entry_analysis) {
+        lines.push(`入场原因：${reasons[item.entry_analysis.reason]||item.entry_analysis.reason||'未记录'}。`);
+        const i=item.entry_analysis.indicators||{};
+        lines.push(`入场指标：EMA10/20/50/200 ${fmt(i.ema10)}/${fmt(i.ema20)}/${fmt(i.ema50)}/${fmt(i.ema200)}，ADX ${fmt(i.adx,1)}，ATR ${fmt(i.atr)}。`);
+      } else lines.push('旧记录未保存入场指标，无法完整还原买入逻辑。');
+    } else lines.push('这是当前持仓快照，不是一次成交；价格为当前估值价格。');
+    const a=item.account_after;
+    lines.push(a?`成交后账户快照（${date(a.time)}，估值价格 ${fmt(a.price)}）：权益 ${fmt(a.equity)} USDT，累计收益 ${signed(a.total_pnl)} USDT（${signed(a.return_pct)}%）。包含剩余持仓价格变化，不能当作该笔利润。`:'历史记录没有成交后账户快照，无法完整还原当时整体收益。');
+    return lines;
+  }
+  function render({market,account,valuation,initial_capital,strategy,activity,bot_updated_at,bot_health,performance}) {
+    const perf=performance||{};
+    for(const [id,value] of [['total-pnl',perf.total_pnl],['today-pnl',perf.today_pnl],['realized-pnl',perf.strategy_realized_pnl]]) {
+      set(id,value==null?'—':`${signed(value)} USDT`); $(id).className=`value ${value==null?'':value>=0?'positive':'negative'}`;
+    }
+    set('total-return',perf.total_return_pct==null?'当前估值不可用':`${signed(perf.total_return_pct)}% · 相对初始资金；含持仓价格变化`);
+    set('spot-fees',perf.recorded_spot_fees==null?'—':`${fmt(perf.recorded_spot_fees,4)} USDT`);
+    set('today-basis',perf.today_start?`${signed(perf.today_return_pct)}% · 实际起点 ${date(perf.today_start)}（${fmt(perf.today_start_equity)} USDT）`:'今日缺少足够采样或实时估值，暂无法计算');
+    set('price',fmt(market.price == null ? account.price : market.price)); set('market-time',market.price==null?'行情暂不可用 · 显示最近机器人价格':`行情更新 ${date(market.updated_at)}`);
+    const c=market.change_24h_pct; set('change',c==null?'24H —':`${c>=0?'+':''}${fmt(c)}% · 24H`); $('change').className=`change ${c==null?'neutral':c>=0?'':'down'}`; draw(market.history);
+    set('initial',fmt(initial_capital)); set('equity',fmt(account.equity)); set('cash',fmt(account.cash)); set('exposure',account.net_exposure==null?'—':`${fmt(account.net_exposure*100,1)}%`);
+    set('equity-total',account.equity==null?'—':`${fmt(account.equity)} USDT`);
+    set('equity-breakdown',valuation?`现金 ${fmt(valuation.cash)} + 现货 ${fmt(valuation.spot_value)} + 策略盈亏 ${valuation.strategy_realized_pnl+valuation.strategy_unrealized_pnl>=0?'+':''}${fmt(valuation.strategy_realized_pnl+valuation.strategy_unrealized_pnl)} USDT`:'实时估值暂不可用，显示最近账户快照');
+    const delta=account.equity==null||!initial_capital?null:(account.equity/initial_capital-1)*100;
+    set('equity-delta',delta==null?'相对初始资金 —':`相对初始资金 ${delta>=0?'+':''}${fmt(delta)}%`); $('equity-delta').className=`caption ${delta==null?'':delta>=0?'positive':'negative'}`;
+    const value=account.core_btc==null||account.price==null?null:account.core_btc*account.price, weight=value==null||!account.equity?null:value/account.equity*100;
+    set('core-value',value==null?'—':`${fmt(value)} USDT`); set('core-weight',weight==null?'—':`${fmt(weight,1)}%`); set('core',account.core_btc==null?'—':`${fmt(account.core_btc,6)} BTC`);
+    $('core-bar').style.width=`${Math.max(0,Math.min(100,weight||0))}%`; $('core-bar').parentElement.setAttribute('aria-label',`现货占账户权益 ${weight==null?'未知':fmt(weight,1)+'%'}`);
+    set('strategy-name',`${strategy.symbol||'BTC/USDT'} · ${strategy.timeframe||'—'} 永续合约`); set('leverage',strategy.configured_leverage==null?'—':`${fmt(strategy.configured_leverage,0)}x`);
+    const p=strategy.position, health=bot_health||{}, cooldown=health.cooldown||{}, signal=health.signal||{};
+    const status=health.stale!==false?'机器人心跳过期':!health.running?'机器人已停止':health.paused_reason?'交易已暂停':health.market_error_count>0?'行情重试中':p?'模拟持仓中':cooldown.remaining_bars>0?`冷却中 · ${cooldown.remaining_bars} 根K线`:'等待信号';
+    const warning=health.stale!==false||!health.running||!!health.paused_reason||health.market_error_count>0;
+    set('bot-status',status); $('bot-pill').className=`status-pill ${warning?'warning':''}`;
+    const reasons={startup:'等待下一根K线收盘',position_open:'管理已有持仓',trade_cooldown:'交易后冷却',loss_pause:'连续亏损冷却',invalid_indicators:'指标尚未准备好',ema_spread_too_small:'均线间距不足',adx_too_low:'趋势强度不足',too_far_from_ema20:'价格离入场均线过远',direction_filters_not_aligned:'长短期趋势条件未同时满足',long_conditions_met:'做多条件满足',short_conditions_met:'做空条件满足',market_data_unavailable:'行情连续失败，等待恢复',protective_orders_missing:'保护单缺失，需人工检查'};
+    const reason=health.paused_reason?(reasons[health.paused_reason]||`暂停原因：${health.paused_reason}`):(reasons[signal.reason]||'等待下一次策略判断');
+    const remaining=cooldown.remaining_bars>0?` · 剩余冷却 ${cooldown.remaining_bars} 根 ${cooldown.timeframe||strategy.timeframe} K线`:'';
+    set('bot-detail',`${reason}${remaining} · 最后行情成功 ${date(health.last_market_success_at)} · 最后收盘K线 ${date(health.last_closed_candle_ts)}`);
+    set('strategy-status',p?'模拟持仓中':'无持仓'); set('strategy-badge',status); $('strategy-badge').className=warning||!p?'badge amber':'badge green'; $('strategy-empty').hidden=!!p;
+    set('active-leverage',p?`${fmt(strategy.configured_leverage,0)}x（模拟）`:'未使用'); set('side',p?(p.side==='long'?'做多':p.side==='short'?'做空':p.side||'—'):'—');
+    for (const [id,key] of [['entry','entry'],['notional','notional'],['take-profit','tp'],['stop-loss','sl']]) set(id,!p||p[key]==null?'—':`${fmt(p[key])} USDT`);
+    set('trade-count',`${activity.length} 项账户活动`); $('trade-empty').hidden=activity.length>0; $('trade-table').hidden=activity.length===0;
+    const body=$('trades'); body.replaceChildren();
+    for (const item of activity) {
+      const row=body.insertRow();
+      const spot=item.kind==='spot_position'||item.kind==='spot_trade', open=item.status==='open';
+      const kind=spot?'BTC 现货核心仓':'Triple EMA 合约';
+      const side=spot?(open?'买入持有':item.side==='buy'?'买入':'卖出'):item.side==='long'?'做多':item.side==='short'?'做空':'—';
+      const price=item.kind==='strategy_close'?`${fmt(item.price)} → ${fmt(item.exit)} USDT`:`${fmt(item.price)} USDT`;
+      const scale=spot?`${fmt(item.size,6)} BTC · ${fmt(item.notional)} USDT`:`${fmt(item.notional)} USDT`;
+      const pnl=item.pnl==null?'—':`${item.pnl>=0?'+':''}${fmt(item.pnl)} USDT`;
+      const values=[kind,open?'当前持仓':item.kind==='spot_trade'?'模拟成交':'已平仓',side,price,scale,pnl,item.fee==null?'—':`${fmt(item.fee,4)} USDT`,open?(item.time?'账户快照 · '+date(item.time):'当前持仓'):date(item.time)];
+      values.forEach((value,i)=>{ const cell=row.insertCell(); cell.textContent=value; if(i===1&&open) cell.className='positive'; if(i===5&&item.pnl!=null) cell.className=item.pnl>=0?'positive':'negative'; });
+      const detailRow=body.insertRow(); detailRow.className='trade-detail';
+      const cell=detailRow.insertCell(); cell.colSpan=8;
+      const details=document.createElement('details');
+      const key=`${item.kind}:${item.time||''}:${item.side||''}`; details.open=expandedTrades.has(key);
+      const summary=document.createElement('summary'); summary.textContent='查看原因与收益'; details.append(summary);
+      for(const line of tradeDetails(item)) { const p=document.createElement('p'); p.textContent=line; details.append(p); }
+      details.addEventListener('toggle',()=>{ if(details.isConnected) { if(details.open) expandedTrades.add(key); else expandedTrades.delete(key); } });
+      cell.append(details);
+    }
+    set('bot-time',`机器人心跳 ${date(bot_updated_at)}`);
+  }
+  async function refresh() { $('refresh').disabled=true; try { const response=await fetch('/api/status',{cache:'no-store'}); if(!response.ok) throw new Error(`状态接口不可用（${response.status}）`); render(await response.json()); $('error').style.display='none'; $('error').textContent=''; } catch(error) { $('error').textContent=`数据刷新失败：${error.message}`; $('error').style.display='block'; set('bot-status','看板读取失败'); $('bot-pill').className='status-pill warning'; } finally { $('refresh').disabled=false; } }
+  let equityRange='1d';
+  function clearPeriodReturn(message) {
+    set('period-pnl','—'); set('period-rate','—'); set('period-basis',message);
+    $('period-pnl').className=''; $('period-rate').className='';
+  }
+  function renderPeriodReturn(points) {
+    if (points.length < 2) { clearPeriodReturn('至少需要两条采样记录，才能计算所选时段收益。'); return; }
+    const first=points[0], last=points.at(-1);
+    const change=last.equity-first.equity, rate=first.equity>0?change/first.equity*100:null;
+    const sign=change>0?'+':'';
+    set('period-pnl',`${sign}${fmt(change)} USDT`);
+    set('period-rate',rate==null?'—':`${rate>0?'+':''}${fmt(rate)}%`);
+    set('period-basis',`实际采样 ${date(first.time)}（${fmt(first.equity)}）→ ${date(last.time)}（${fmt(last.equity)}）USDT`);
+    const tone=change>0?'positive':change<0?'negative':'';
+    $('period-pnl').className=tone; $('period-rate').className=tone;
+  }
+  function drawEquity({points,first_sample_time,sample_count,requested_start,end}) {
+    const values=points.map(point=>Number(point.equity));
+    const path=$('equity-path'), dot=$('equity-dot');
+    if (!values.length) {
+      clearPeriodReturn('所选时段暂无采样记录。');
+      path.setAttribute('d',''); dot.style.display='none';
+      set('equity-axis-high',''); set('equity-axis-low',''); set('equity-from',date(requested_start)); set('equity-to',date(end));
+      set('equity-note',first_sample_time?`所选时段暂无采样。历史记录始于 ${date(first_sample_time)}。`:'尚无权益采样。看板启动并获取行情后，每分钟记录一次。');
+      return;
+    }
+    renderPeriodReturn(points);
+    const low=Math.min(...values), high=Math.max(...values), span=Math.max(high-low,Math.abs(high)*.002,0.01);
+    const bottom=low-(span-(high-low))/2, top=bottom+span;
+    const firstTime=points[0].time, lastTime=points[points.length-1].time;
+    const coords=points.map(point=>[65+(point.time-requested_start)*815/(end-requested_start),225-(point.equity-bottom)*190/span]);
+    const d=coords.map(([x,y],i)=>`${i?'L':'M'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ');
+    path.setAttribute('d',values.length>1?d:'');
+    const [x,y]=coords[coords.length-1]; dot.setAttribute('cx',x); dot.setAttribute('cy',y); dot.style.display='';
+    const color=values.at(-1)>=values[0]?'var(--green)':'var(--red)'; path.style.stroke=color; dot.style.fill=color;
+    set('equity-axis-high',fmt(top)); set('equity-axis-low',fmt(bottom)); set('equity-from',date(requested_start)); set('equity-to',date(end));
+    const coverage=first_sample_time>requested_start?`历史记录始于 ${date(first_sample_time)}；此前没有可还原的权益数据。`:'所选时段内的实际采样数据。';
+    set('equity-note',`${sample_count} 条采样 · ${coverage}${sample_count===1?' 当前只有一个采样点，曲线将在下一次采样后出现。':''}`);
+    $('equity-chart').setAttribute('aria-label',`纸面账户权益从 ${date(firstTime)} 的 ${fmt(values[0])} USDT 到 ${date(lastTime)} 的 ${fmt(values.at(-1))} USDT，共 ${sample_count} 条采样`);
+  }
+  async function loadEquityHistory() {
+    const params=new URLSearchParams({range:equityRange});
+    if (equityRange==='custom') {
+      const start=new Date($('equity-start').value).getTime();
+      const end=$('equity-end').value?new Date($('equity-end').value).getTime():Date.now();
+      if (!Number.isFinite(start)||!Number.isFinite(end)||start>=end||end>Date.now()) { clearPeriodReturn('请选择有效的时间范围。'); set('equity-note','请选择有效的时间范围：起始时间早于结束时间，结束时间不晚于现在。'); return; }
+      params.set('start',String(start));
+      if ($('equity-end').value) params.set('end',String(end));
+    }
+    try {
+      const response=await fetch(`/api/equity-history?${params}`,{cache:'no-store'});
+      if (!response.ok) throw new Error(`历史接口不可用（${response.status}）`);
+      drawEquity(await response.json());
+    } catch(error) { clearPeriodReturn('所选时段收益暂不可用。'); set('equity-note',`权益历史读取失败：${error.message}`); }
+  }
+  document.querySelectorAll('[data-range]').forEach(button=>button.addEventListener('click',()=>{
+    equityRange=button.dataset.range;
+    document.querySelectorAll('[data-range]').forEach(item=>item.setAttribute('aria-pressed',String(item===button)));
+    $('custom-start').hidden=equityRange!=='custom';
+    if (equityRange!=='custom' || $('equity-start').value) loadEquityHistory();
+    else { clearPeriodReturn('请选择起始时间并点击应用。'); set('equity-note','请选择起始时间；结束时间留空表示现在。'); $('equity-start').focus(); }
+  }));
+  $('apply-range').addEventListener('click',loadEquityHistory);
+  for (const id of ['equity-start','equity-end']) $(id).addEventListener('keydown',event=>{ if(event.key==='Enter') loadEquityHistory(); });
+  const navLinks=Array.from(document.querySelectorAll('nav a[href^="#"]'));
+  function syncNav() {
+    const offset=window.innerWidth<=850?130:70;
+    let current=navLinks[0].getAttribute('href');
+    for (const link of navLinks) {
+      const section=document.querySelector(link.getAttribute('href'));
+      if (section && section.getBoundingClientRect().top<=offset) current=link.getAttribute('href');
+    }
+    for (const link of navLinks) {
+      const active=link.getAttribute('href')===current;
+      link.classList.toggle('active',active);
+      if (active) link.setAttribute('aria-current','location'); else link.removeAttribute('aria-current');
+    }
+  }
+  let navFrame=false;
+  window.addEventListener('scroll',()=>{ if (!navFrame) { navFrame=true; requestAnimationFrame(()=>{ syncNav(); navFrame=false; }); } },{passive:true});
+  window.addEventListener('resize',syncNav);
+  window.addEventListener('hashchange',()=>setTimeout(syncNav,350));
+  $('refresh').addEventListener('click',()=>{ refresh(); loadEquityHistory(); }); syncNav(); refresh(); loadEquityHistory(); setInterval(refresh,15000); setInterval(loadEquityHistory,60000);
+</script>
+</body>
+</html>

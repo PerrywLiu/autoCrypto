@@ -4,6 +4,7 @@
 services:
   bot:
     build: .
+    image: autocrypto-bot
     container_name: autocrypto
     restart: unless-stopped    # 崩溃自动重启
     environment:
@@ -26,3 +27,19 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  dashboard:
+    image: autocrypto-bot
+    container_name: autocrypto-dashboard
+    restart: unless-stopped
+    command: [".venv/bin/python", "web/dashboard.py"]
+    ports:
+      - "8765:8765"
+    volumes:
+      - ./web/index.html:/app/web/index.html:ro
+      - ./outputs:/app/outputs:ro
+      - ./config:/app/config:ro
+      - ./outputs/dashboard:/app/dashboard-data
+    read_only: true
+    depends_on:
+      - bot

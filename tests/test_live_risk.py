@@ -4,6 +4,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
 import pandas as pd
 import yaml
 
@@ -46,7 +47,9 @@ from src.live.portfolio import (
     plan_core_rebalance,
     portfolio_exposure,
 )
-from src.live.production_bot import ProductionBot, _normalize_strategy_config
+from src.live.production_bot import (
+    ProductionBot, _normalize_strategy_config, closed_candles_after,
+)
 from src.live.risk import calculate_position_size, loss_pause_decision
 
 
@@ -136,6 +139,57 @@ class LossPauseTests(unittest.TestCase):
 
 
 class ProductionConfigTests(unittest.TestCase):
+    def test_only_newly_closed_candles_are_selected(self):
+        hour = 3_600_000
+        candles = [[hour, 1], [2 * hour, 2], [3 * hour, 3]]
+        self.assertEqual(
+            closed_candles_after(candles, hour, hour, 3 * hour + 1),
+            [[2 * hour, 2]],
+        )
+        self.assertEqual(
+            closed_candles_after(candles, 2 * hour, hour, 3 * hour + 1),
+            [],
+        )
+
+    def test_closed_candle_is_added_before_signal_evaluation(self):
+        bot = ProductionBot.__new__(ProductionBot)
+        bot._candles = [[i, 100, 101, 99, 100, 1] for i in range(220)]
+        bot._ohlcv = {
+            key: np.array([c[i] for c in bot._candles], dtype=float)
+            for i, key in enumerate(("open", "high", "low", "close", "volume"), 1)
+        }
+        bot._position = None
+        bot._last_signal = {"decision": "waiting"}
+        bot._paused_reason = None
+        bot._last_trade_bar = -999
+        bot._consecutive_losses = 0
+        bot.p_ema_f, bot.p_ema_m = 10, 20
+        bot.p_ema_s, bot.p_ema_t = 50, 200
+        bot.p_cooldown = 6
+        bot.p_cooldown_extra_per_loss = 3
+        bot.max_consecutive_losses = 5
+        bot.loss_pause_bars = 18
+        bot._update_portfolio_plan = lambda candle: None
+        bot._write_account_snapshot = lambda price: None
+        observed = []
+        signal = {"side": "long", "entry": 102, "sl": 99, "tp": 108}
+        bot.evaluate = lambda: observed.append(bot._ohlcv["close"][-1]) or signal
+        bot.execute_signal = lambda item: observed.append(item) or True
+
+        bot._process_closed_candle([220, 101, 103, 100, 102, 1])
+
+        self.assertEqual(observed, [102, signal])
+        self.assertEqual(len(bot._candles), 221)
+
+    def test_paper_equity_includes_closed_strategy_pnl(self):
+        bot = ProductionBot.__new__(ProductionBot)
+        bot.dry_run = True
+        bot._paper_cash = 200.0
+        bot._paper_core_btc = 0.01
+        bot._total_pnl = 15.0
+        bot._position = None
+        self.assertAlmostEqual(bot._portfolio_equity(10000), 315.0)
+
     def test_production_strategy_config_matches_bot_constructor(self):
         with open("config/production.yaml") as f:
             cfg = yaml.safe_load(f)

@@ -22,6 +22,7 @@ RUN uv sync --frozen --no-dev
 # 复制源码
 COPY src/ ./src/
 COPY scripts/ ./scripts/
+COPY web/ ./web/
 COPY config/ ./config/
 COPY tests/ ./tests/
 COPY main.py ./

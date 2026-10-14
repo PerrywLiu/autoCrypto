@@ -13,6 +13,8 @@ task/
 # 数据文件
 data/
 outputs/
+output/
+.playwright-cli/
 
 # 环境变量
 .env
