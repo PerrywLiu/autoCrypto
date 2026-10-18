@@ -32,6 +32,7 @@ from src.live.portfolio import (
     portfolio_exposure,
 )
 from src.live.risk import calculate_position_size, loss_pause_decision
+from src.live.trade_history import open_event, recover_open_time
 
 
 # ═══════════════════════════════════════════
@@ -186,6 +187,7 @@ class ProductionBot:
         self._running = False
         self._position: Optional[dict] = None
         self._trade_log: list = []
+        self._strategy_open_log: list = []
         self._consecutive_losses = 0
         self._last_trade_bar = -999
         self._last_trade_candle_ts: int | None = None
@@ -233,6 +235,7 @@ class ProductionBot:
             "last_trade_bar": self._last_trade_bar,
             "last_trade_candle_ts": self._last_trade_candle_ts,
             "trade_log": self._trade_log,
+            "strategy_open_log": self._strategy_open_log,
             "core_trade_log": self._core_trade_log,
             "updated_at": str(datetime.now(timezone.utc)),
         }
@@ -272,6 +275,15 @@ class ProductionBot:
             )
             self._last_trade_bar = int(state.get("last_trade_bar", self._last_trade_bar))
             self._trade_log = list(state.get("trade_log", self._trade_log))
+            opens = state.get("strategy_open_log", [])
+            self._strategy_open_log = [row for row in opens if isinstance(row, dict)] if isinstance(opens, list) else []
+            self._position = recover_open_time(
+                self._position, self.state_file.with_name("production.log"))
+            if self._position and self._position.get("opened_at"):
+                event = open_event(self._position)
+                if not any(row.get("time") == event["time"] and row.get("side") == event["side"]
+                           for row in self._strategy_open_log):
+                    self._strategy_open_log.append(event)
             self._core_trade_log = list(state.get("core_trade_log", []))
             self._last_trade_candle_ts = state.get("last_trade_candle_ts")
             if self._last_trade_candle_ts is None and self._trade_log:
@@ -652,6 +664,22 @@ class ProductionBot:
         if self._position:
             self._last_signal = {"decision": "holding", "reason": "position_open"}
             self._check_exit_conditions(candle)
+            # Capture the result of the existing exit check; no new exit rules.
+            if self._position:
+                ind = self._indicators
+                self._last_signal["holding_check"] = {
+                    "opened_at": self._position.get("opened_at"),
+                    "side": self._position["side"], "entry": self._position["entry"],
+                    "candle_ts": candle[0], "high": float(candle[2]),
+                    "low": float(candle[3]), "close": float(candle[4]),
+                    "ema10": float(ind["ema10"][-1]),
+                    "ema20": float(ind["ema20"][-1]),
+                    "ema50": float(ind["ema50"][-1]),
+                    "alignment_intact": bool(self._is_bull_align() if self._position["side"] == "long"
+                                             else self._is_bear_align()),
+                }
+            else:
+                self._last_signal = {"decision": "closed", "reason": "position_closed"}
             return
 
         bars_since = self._bars_since_trade()
@@ -1196,6 +1224,8 @@ class ProductionBot:
         if self.dry_run:
             self._position = {
                 **signal,
+                "opened_at": str(datetime.now(timezone.utc)),
+                "opened_at_source": "execution",
                 "entry_analysis": self._entry_analysis(),
                 "size": size,
                 "notional": notional,
@@ -1203,6 +1233,7 @@ class ProductionBot:
                 "max_notional": sizing.max_notional,
                 "capped": sizing.capped or notional < sizing.notional,
             }
+            self._strategy_open_log.append(open_event(self._position))
             logger.info(
                 f"📝 [纸上] {side.upper()} {amount}张 @{entry:.0f} "
                 f"名义={notional:.1f}U "
@@ -1275,8 +1306,10 @@ class ProductionBot:
                 "stop_loss": self._order_snapshot(result.stop_loss),
             },
             "opened_at": str(datetime.now(timezone.utc)),
+            "opened_at_source": "execution",
             "live": True,
         }
+        self._strategy_open_log.append(open_event(self._position))
         self._save_state()
 
         logger.info(
@@ -1429,6 +1462,8 @@ class ProductionBot:
         self._last_trade_candle_ts = self._candles[-1][0] if self._candles else None
 
         trade = {
+            "opened_at": pos.get("opened_at"),
+            "opened_at_source": pos.get("opened_at_source"),
             "side": pos["side"],
             "entry": pos["entry"],
             "exit": price,

@@ -249,6 +249,8 @@ uv run python -m unittest discover -s tests
 
 ## 推荐上线流程
 
+源码交付遵循本地修复、测试与提交，push 到 GitHub 后，再由服务器拉取同一提交。服务器存在未提交内容时先比较并保全，不能用直接上传文件代替 Git 同步。具体步骤见 [Git 发布流程](docs/git-release-workflow.md)。
+
 1. `backtest`：确认策略参数和回测区间。
 2. `paper`：至少连续运行 2 周，观察信号、状态恢复和日志。
 3. `readonly`：接真实账户只读快照，确认账户解析和组合计划正确。

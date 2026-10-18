@@ -8,7 +8,11 @@ from zoneinfo import ZoneInfo
 from pathlib import Path
 import threading
 import time
+import sys
 from urllib.parse import parse_qs, urlsplit
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src.live.trade_history import open_event, recover_open_time
 
 import ccxt
 import yaml
@@ -36,6 +40,14 @@ def read_json(name, default):
             return json.load(file)
     except (FileNotFoundError, OSError, ValueError):
         return default
+
+
+def activity_timestamp(row):
+    try:
+        stamp = datetime.fromisoformat(row.get("time"))
+        return stamp.timestamp() if stamp.tzinfo is not None else float("-inf")
+    except (TypeError, ValueError, OverflowError):
+        return float("-inf")
 
 
 def market_ticker():
@@ -102,6 +114,15 @@ def dashboard_data():
     position = state.get("position") if "position" in state else snapshot.get("position")
     if not isinstance(position, dict):
         position = None
+    position = recover_open_time(position, OUTPUTS / "production.log")
+    saved_opens = state.get("strategy_open_log", [])
+    opens = [dict(row) for row in saved_opens if isinstance(row, dict)] if isinstance(saved_opens, list) else []
+    # Saved close records may retain an entry timestamp even without an open ledger.
+    for item in [*trades, position]:
+        if isinstance(item, dict) and item.get("opened_at"):
+            event = open_event(item)
+            if not any(row.get("time") == event['time'] and row.get('side') == event['side'] for row in opens):
+                opens.append(event)
     strategy = config.get("strategy", {})
     risk = config.get("risk", {})
     market = market_ticker()
@@ -130,14 +151,17 @@ def dashboard_data():
         activity.append({
             "kind": "strategy_position", "status": "open",
             "side": position.get("side"), "price": position.get("entry"),
-            "notional": position.get("notional"), "time": None,
+            "notional": position.get("notional"), "time": position.get("opened_at"),
+            "opened_at_source": position.get("opened_at_source"),
         })
+    activity.extend({**row, "kind": "strategy_open", "status": "filled",
+                     "price": row.get("entry")} for row in opens)
     activity.extend({
         "kind": "strategy_close", "status": "closed",
         "side": trade.get("side"), "price": trade.get("entry"),
         "exit": trade.get("exit"), "notional": trade.get("notional"),
         "pnl": trade.get("pnl"), "time": trade.get("time"),
-        **{key: trade.get(key) for key in ("reason", "entry_analysis", "account_after", "total_fee")},
+        **{key: trade.get(key) for key in ("reason", "entry_analysis", "account_after", "total_fee", "opened_at", "opened_at_source")},
     } for trade in reversed(trades[-50:]) if isinstance(trade, dict))
     core_trades = state.get("core_trade_log", [])
     if isinstance(core_trades, list):
@@ -148,7 +172,7 @@ def dashboard_data():
     # Current holdings remain separate from the dated simulated fills.
     current_activity = [row for row in activity if row["status"] == "open"]
     completed = sorted((row for row in activity if row["status"] != "open"),
-                       key=lambda row: str(row.get("time") or ""), reverse=True)
+                       key=activity_timestamp, reverse=True)
     activity = current_activity + completed[:50]
     health = read_json("production_health.json", {})
     if not isinstance(health, dict):
@@ -166,6 +190,15 @@ def dashboard_data():
         "last_market_success_at", "last_closed_candle_ts", "cooldown", "signal",
     )}
     bot_health["stale"] = stale
+    check = (health.get("signal") or {}).get("holding_check")
+    # A fresh heartbeat alone does not prove an exit check for this position/bar.
+    if (not position or stale or not health.get("running") or health.get("paused_reason")
+            or health.get("market_error_count", 0) or not isinstance(check, dict)
+            or check.get("candle_ts") != health.get("last_closed_candle_ts")
+            or check.get("side") != position.get("side")
+            or check.get("entry") != position.get("entry")
+            or check.get("opened_at") != position.get("opened_at")):
+        check = None
     return {
         "market": market,
         "account": account,
@@ -178,8 +211,9 @@ def dashboard_data():
             "timeframe": config.get("timeframe"),
             "configured_leverage": risk.get("leverage"),
             "position": {key: position.get(key) for key in (
-                "side", "entry", "size", "notional", "tp", "sl"
+                "side", "entry", "size", "notional", "tp", "sl", "opened_at", "opened_at_source"
             )} if position else None,
+            "holding_check": check,
         },
         "trades": [{key: trade.get(key) for key in fields} for trade in trades[-50:] if isinstance(trade, dict)],
         "activity": activity,

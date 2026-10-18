@@ -53,6 +53,10 @@
     .price small { color:var(--subtle); font-size:15px; letter-spacing:0; font-weight:400; margin-left:7px; }
     .change { display:inline-block; margin-top:15px; padding:6px 10px; color:var(--green); background:#174038; border-radius:8px; font-size:14px; font-weight:500; font-variant-numeric:tabular-nums; }
     .change.down { color:var(--red); background:#442630; } .change.neutral { color:var(--muted); background:var(--raised); }
+    .holding-reason { border-top:1px solid var(--line); margin-top:18px; padding-top:16px; }
+    .holding-reason h4 { font-size:14px; font-weight:500; margin:0 0 7px; }
+    .holding-reason p { font-size:13px; color:var(--muted); margin:0 0 8px; overflow-wrap:anywhere; }
+    .holding-reason .micro { font-size:12px; }
     .micro { color:var(--subtle); font-size:12px; }
     .chart-wrap { min-width:0; display:flex; flex-direction:column; padding:23px 25px 18px 0; }
     .chart-title,.chart-times { display:flex; justify-content:space-between; gap:12px; font-size:12px; color:var(--subtle); }
@@ -161,11 +165,11 @@
     <div class="section-head" id="holdings"><h2>持仓概览</h2><span>两套策略分别展示</span></div>
     <div class="holdings">
       <section class="card holding" aria-labelledby="spot-heading"><div class="panel-head"><div><div class="eyebrow">Core allocation</div><h3 id="spot-heading">BTC 现货核心仓</h3><p>按市场状态调整目标权重</p></div><span class="badge green">现货持有</span></div><div class="headline"><div><div class="main-label">当前市值</div><div class="big" id="core-value">—</div></div><div class="aside">账户占比<strong id="core-weight">—</strong></div></div><div class="bar" role="img" aria-label="现货占账户权益比例"><div id="core-bar"></div></div><div class="bar-scale"><span>0%</span><span>100%</span></div><dl class="details"><div><dt>持有数量</dt><dd id="core">—</dd></div><div><dt>仓位类型</dt><dd>BTC / USDT 现货</dd></div></dl></section>
-      <section class="card holding" aria-labelledby="strategy-heading"><div class="panel-head"><div><div class="eyebrow">Satellite strategy</div><h3 id="strategy-heading">Triple EMA 策略</h3><p id="strategy-name">BTC/USDT · 4h 永续合约</p></div><span class="badge amber" id="strategy-badge">等待信号</span></div><div class="empty-position" id="strategy-empty"><strong>策略正在观察市场</strong>当前没有合约仓位。满足信号和风控条件后，这里会显示模拟持仓。</div><div class="headline"><div><div class="main-label">当前策略仓位</div><div class="big" id="strategy-status">无持仓</div></div><div class="aside">设定杠杆<strong id="leverage">—</strong></div></div><dl class="details"><div><dt>杠杆使用</dt><dd id="active-leverage">—</dd></div><div><dt>方向</dt><dd id="side">—</dd></div><div><dt>入场价</dt><dd id="entry">—</dd></div><div><dt>名义仓位</dt><dd id="notional">—</dd></div><div><dt>止盈价</dt><dd id="take-profit">—</dd></div><div><dt>止损价</dt><dd id="stop-loss">—</dd></div></dl></section>
+      <section class="card holding" aria-labelledby="strategy-heading"><div class="panel-head"><div><div class="eyebrow">Satellite strategy</div><h3 id="strategy-heading">Triple EMA 策略</h3><p id="strategy-name">BTC/USDT · 4h 永续合约</p></div><span class="badge amber" id="strategy-badge">等待信号</span></div><div class="empty-position" id="strategy-empty"><strong>策略正在观察市场</strong>当前没有合约仓位。满足信号和风控条件后，这里会显示模拟持仓。</div><div class="headline"><div><div class="main-label">当前策略仓位</div><div class="big" id="strategy-status">无持仓</div></div><div class="aside">设定杠杆<strong id="leverage">—</strong></div></div><dl class="details"><div><dt>杠杆使用</dt><dd id="active-leverage">—</dd></div><div><dt>方向</dt><dd id="side">—</dd></div><div><dt>开仓时间 · 北京时间</dt><dd id="opened-at">—</dd></div><div><dt>入场价</dt><dd id="entry">—</dd></div><div><dt>名义仓位</dt><dd id="notional">—</dd></div><div><dt>止盈价</dt><dd id="take-profit">—</dd></div><div><dt>止损价</dt><dd id="stop-loss">—</dd></div></dl><div class="holding-reason" id="holding-reason" hidden aria-live="polite"><h4 id="holding-title">持仓检查待确认</h4><p id="holding-summary"></p><p id="holding-evidence" class="micro"></p><p class="micro">每根四小时 K 线收盘后检查止盈、止损和均线排列；持仓期间不重复开仓。</p></div></section>
     </div>
-    <div class="section-head" id="history"><h2>持仓与交易记录</h2><span>当前持仓、现货调仓与合约平仓 · 北京时间</span></div>
+    <div class="section-head" id="history"><h2>持仓与交易记录</h2><span>当前持仓、模拟开仓、现货调仓与合约平仓 · 北京时间</span></div>
     <section class="performance" aria-label="整体收益分析"><div class="kpis"><div class="card kpi"><div class="label">累计账户收益</div><div class="value" id="total-pnl">—</div><div class="caption" id="total-return">相对初始资金；含持仓价格变化</div></div><div class="card kpi"><div class="label">今日账户权益变化</div><div class="value" id="today-pnl">—</div><div class="caption" id="today-basis">北京时间今日首条采样至最新估值</div></div><div class="card kpi"><div class="label">合约已实现盈亏</div><div class="value" id="realized-pnl">—</div><div class="caption">沿用账户记账值；合约费用未完整计入</div></div><div class="card kpi"><div class="label">已记录现货调仓手续费</div><div class="value" id="spot-fees">—</div><div class="caption">已在账户现金扣除，不再重复扣减收益</div></div></div><p class="performance-note">现货调仓不等于全部平仓；旧仓成本和历史费用不完整，现货已实现利润无法完整还原。手续费仅汇总有记录的成交。</p></section>
-    <section class="card history" aria-labelledby="history-heading"><div class="history-head"><div><h3 id="history-heading">账户活动</h3><p>当前持仓为快照；更新后记录现货模拟成交，旧版调仓明细无法完整还原</p></div><span class="badge" id="trade-count">0 条记录</span></div><div class="table-scroll" id="trade-table" hidden><table><thead><tr><th>类型</th><th>状态</th><th>方向</th><th>价格</th><th>规模</th><th>盈亏</th><th>费用</th><th>时间</th></tr></thead><tbody id="trades"></tbody></table></div><div class="trade-empty" id="trade-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 5h16M4 10h16M4 15h10"/><circle cx="17" cy="17" r="4"/><path d="M17 15v2h2"/></svg><strong>暂无持仓或已平仓交易</strong><p>出现持仓或完成模拟策略交易后，会在这里显示。</p></div></section>
+    <section class="card history" aria-labelledby="history-heading"><div class="history-head"><div><h3 id="history-heading">账户活动</h3><p>当前持仓为快照；开仓与平仓分别记录。旧记录缺失的时间与原因会明确标注</p></div><span class="badge" id="trade-count">0 条记录</span></div><div class="table-scroll" id="trade-table" hidden><table><thead><tr><th>类型</th><th>状态</th><th>方向</th><th>价格</th><th>规模</th><th>盈亏</th><th>费用</th><th>时间</th></tr></thead><tbody id="trades"></tbody></table></div><div class="trade-empty" id="trade-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 5h16M4 10h16M4 15h10"/><circle cx="17" cy="17" r="4"/><path d="M17 15v2h2"/></svg><strong>暂无持仓或已平仓交易</strong><p>出现持仓或完成模拟策略交易后，会在这里显示。</p></div></section>
     <footer><span id="bot-time">等待机器人状态…</span><span>纸面交易 · 数据仅供策略验证</span></footer>
   </main>
 </div>
@@ -197,7 +201,16 @@
         lines.push(`触发指标：本根 K 线涨跌 ${signed(a.bar_return*100)}%；收盘 ${fmt(a.close)}，EMA200 ${fmt(a.ema200)}。${a.urgent?`紧急触发依据：${[a.regime==='bear'?'市场分类为熊市':null,a.below_ema200?'价格跌破 EMA200':null,a.sharp_drop?'单根跌幅达到减仓阈值':null].filter(Boolean).join('、')||'未记录'}。`:''}`);
       } else lines.push('历史记录未保存当时的市场分类和触发指标，无法完整还原逐笔原因。');
       lines.push(`现货成交手续费 ${fmt(item.fee,4)} USDT。原有持仓买入成本不完整，不能据此计算该笔已实现利润，也不能将卖出与买入金额差当作收益。`);
+    } else if(item.kind==='strategy_open') {
+      lines.push(`模拟开仓：${date(item.time)}${item.opened_at_source==='production_log_utc'?'（从服务器 UTC 日志恢复）':''}。开仓不等于已实现收益。`);
+      lines.push(`入场 ${fmt(item.price)} USDT，止盈 ${fmt(item.tp)} USDT，止损 ${fmt(item.sl)} USDT。`);
+      lines.push(item.entry_analysis?`入场原因：${reasons[item.entry_analysis.reason]||item.entry_analysis.reason||'未记录'}。`:'旧记录未保存完整入场指标。');
+    } else if(item.kind==='strategy_position') {
+      lines.push(`当前模拟${item.side==='short'?'空仓':'多仓'}；此行是持仓快照，入场价 ${fmt(item.price)} USDT。`);
+      lines.push(item.time?`开仓时间：${date(item.time)}${item.opened_at_source==='production_log_utc'?'（从服务器 UTC 日志恢复）':''}。`:'开仓时间未记录，无法可靠恢复。');
+      lines.push('最近一次退出检查及继续持有的原因见上方持仓概览。');
     } else if(item.kind==='strategy_close') {
+      lines.push(item.opened_at?`开仓时间：${date(item.opened_at)}。`:'旧记录的开仓时间未记录，无法可靠恢复。');
       lines.push(`退出原因：${reasons[item.reason]||item.reason||'未记录'}。该笔记录盈亏 ${signed(item.pnl)} USDT；合约手续费、资金费未完整计入，无法确认净收益。`);
       if(item.entry_analysis) {
         lines.push(`入场原因：${reasons[item.entry_analysis.reason]||item.entry_analysis.reason||'未记录'}。`);
@@ -239,6 +252,24 @@
     set('strategy-status',p?'模拟持仓中':'无持仓'); set('strategy-badge',status); $('strategy-badge').className=warning||!p?'badge amber':'badge green'; $('strategy-empty').hidden=!!p;
     set('active-leverage',p?`${fmt(strategy.configured_leverage,0)}x（模拟）`:'未使用'); set('side',p?(p.side==='long'?'做多':p.side==='short'?'做空':p.side||'—'):'—');
     for (const [id,key] of [['entry','entry'],['notional','notional'],['take-profit','tp'],['stop-loss','sl']]) set(id,!p||p[key]==null?'—':`${fmt(p[key])} USDT`);
+    set('opened-at',!p?'—':p.opened_at?`${date(p.opened_at)}${p.opened_at_source==='production_log_utc'?' · 日志恢复':''}`:'未记录，无法可靠恢复');
+    $('holding-reason').hidden=!p;
+    if(p) {
+      const check=warning?null:strategy.holding_check;
+      const valid=check && [check.high,check.low,check.close,check.ema10,check.ema20,check.ema50,p.tp,p.sl].every(Number.isFinite) && typeof check.alignment_intact==='boolean';
+      if(valid) {
+        const tpHit=p.side==='short'?check.low<=p.tp:check.high>=p.tp;
+        const slHit=p.side==='short'?check.high>=p.sl:check.low<=p.sl;
+        const exits=[tpHit?'止盈':null,slHit?'止损':null,!check.alignment_intact?'均线排列破坏':null].filter(Boolean);
+        set('holding-title',exits.length?'退出条件已出现':'继续持有的原因');
+        set('holding-summary',exits.length?`${exits.join('、')}条件已出现，持仓尚未确认关闭，请检查运行状态。`:`最近一次收盘检查：未触及止盈和止损，${p.side==='short'?'空头':'多头'}均线排列仍保持。已有持仓，因此不重复开仓。`);
+        set('holding-evidence',`K 线开始 ${date(check.candle_ts)} · 高 / 低 ${fmt(check.high)} / ${fmt(check.low)} · 收盘 ${fmt(check.close)} USDT。EMA10 / 20 / 50：${fmt(check.ema10)} / ${fmt(check.ema20)} / ${fmt(check.ema50)}。这是收盘检查结果，实时价格变化等待下一根收盘判断。`);
+      } else {
+        set('holding-title','持仓检查待确认');
+        set('holding-summary',warning?`${status}；目前只显示最近持仓快照，无法确认当前继续持有的原因。`:'已有模拟持仓；尚未记录本仓位的退出检查结果，等待下一根四小时 K 线收盘。');
+        set('holding-evidence','止盈、止损价格见上方；缺少检查数据时，不推断退出条件是否满足。');
+      }
+    }
     set('trade-count',`${activity.length} 项账户活动`); $('trade-empty').hidden=activity.length>0; $('trade-table').hidden=activity.length===0;
     const body=$('trades'); body.replaceChildren();
     for (const item of activity) {
@@ -249,7 +280,7 @@
       const price=item.kind==='strategy_close'?`${fmt(item.price)} → ${fmt(item.exit)} USDT`:`${fmt(item.price)} USDT`;
       const scale=spot?`${fmt(item.size,6)} BTC · ${fmt(item.notional)} USDT`:`${fmt(item.notional)} USDT`;
       const pnl=item.pnl==null?'—':`${item.pnl>=0?'+':''}${fmt(item.pnl)} USDT`;
-      const values=[kind,open?'当前持仓':item.kind==='spot_trade'?'模拟成交':'已平仓',side,price,scale,pnl,item.fee==null?'—':`${fmt(item.fee,4)} USDT`,open?(item.time?'账户快照 · '+date(item.time):'当前持仓'):date(item.time)];
+      const values=[kind,open?'当前持仓':item.kind==='strategy_open'?'模拟开仓':item.kind==='spot_trade'?'模拟成交':'已平仓',side,price,scale,pnl,item.fee==null?'—':`${fmt(item.fee,4)} USDT`,open?(item.kind==='strategy_position'?(item.time?'开仓 · '+date(item.time):'开仓时间未记录'):(item.time?'账户快照 · '+date(item.time):'当前持仓')):date(item.time)];
       values.forEach((value,i)=>{ const cell=row.insertCell(); cell.textContent=value; if(i===1&&open) cell.className='positive'; if(i===5&&item.pnl!=null) cell.className=item.pnl>=0?'positive':'negative'; });
       const detailRow=body.insertRow(); detailRow.className='trade-detail';
       const cell=detailRow.insertCell(); cell.colSpan=8;
