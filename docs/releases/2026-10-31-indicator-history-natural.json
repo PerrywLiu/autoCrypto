@@ -1,0 +1,76 @@
+{
+  "release": "20261031T021900Z-history",
+  "code_commit": "34570e8d7dd84b44b66a4eb22b504a5b5fc9da0f",
+  "checked_at": "2026-10-31T04:03:13.009160+00:00",
+  "stage": "natural_close",
+  "checks": {
+    "paper_state": true,
+    "dry_run_command": true,
+    "config_unchanged": true,
+    "main_running": true,
+    "main_heartbeat_after_restart": true,
+    "history_matches_health": true,
+    "old_experiment_stopped": true,
+    "old_experiment_preserved": true,
+    "new_shadow_running": true,
+    "new_shadow_after_restart": true,
+    "new_shadow_validated": true,
+    "new_shadow_same_close": true,
+    "new_shadow_network_disabled": true,
+    "source_mounts_readonly": true,
+    "history_prefix_preserved": true,
+    "new_shadow_integrity": true,
+    "equity_integrity": true,
+    "state_snapshot_stable": true,
+    "natural_main_close": true,
+    "natural_shadow_close": true,
+    "new_bar_saved_without_trade": true
+  },
+  "passed": true,
+  "health": {
+    "updated_at": "2026-10-31 04:02:39.012818+00:00",
+    "running": true,
+    "mode": "paper",
+    "paused_reason": null,
+    "api_error_count": 0,
+    "market_error_count": 0,
+    "last_market_success_at": "2026-10-31 04:02:39.012758+00:00",
+    "last_closed_candle_ts": 1793404800000,
+    "cooldown": {
+      "elapsed_bars": 17,
+      "required_bars": 18,
+      "remaining_bars": 1,
+      "timeframe": "4h"
+    },
+    "signal": {
+      "decision": "cooldown",
+      "reason": "trade_cooldown"
+    },
+    "history_origin": "reconstructed_20261018_restart",
+    "history_bars": 378
+  },
+  "history_bars": 378,
+  "new_shadow_processed": 1,
+  "new_shadow_comparison_validated": true,
+  "image": "autocrypto-bot:history-20261031",
+  "image_id": "sha256:d41b76b7ea145d984a8ff7a27efe3fa6da395c2472f867467dac348bc82ab4d9",
+  "bot_started_at": "2026-10-31T02:19:33.812261265Z",
+  "shadow_started_at": "2026-10-31T02:19:54.358514614Z",
+  "ledger_counts": {
+    "trade_log": 4,
+    "core_trade_log": 13,
+    "strategy_open_log": 3
+  },
+  "original_shadow_sha256": "ec88dd84bb21c26559aea0baf942d92ddeba8c63102214712b1a90450b0980dd",
+  "next_required_candle_ts": 1793404800000,
+  "natural_trigger_evidence": {
+    "bot_processed_at_utc": "2026-10-31T04:00:38.960Z",
+    "shadow_processed_at_utc": "2026-10-31T04:00:49.059648Z",
+    "main_close_log_count": 1,
+    "shadow_close_log_count": 2,
+    "dashboard_same_close": true,
+    "dashboard_paper": true,
+    "dashboard_healthy": true,
+    "manual_trigger_used": false
+  }
+}
