@@ -205,6 +205,7 @@ class RestartCooldownTests(unittest.TestCase):
         original = bot_at(self.path)
         state = original._state_payload()
         state.pop("last_trade_candle_ts", None)
+        state.pop("indicator_history", None)
         state.update(last_trade_bar=305, consecutive_losses=1,
                      trade_log=[{"time": "2026-10-07 04:00:07.106057+00:00"}])
         self.path.write_text(json.dumps(state))
@@ -219,6 +220,7 @@ class RestartCooldownTests(unittest.TestCase):
         original = bot_at(self.path)
         state = original._state_payload()
         state.pop("last_trade_candle_ts", None)
+        state.pop("indicator_history", None)
         state.update(last_trade_bar=305, consecutive_losses=1, trade_log=[])
         self.path.write_text(json.dumps(state))
         restored = bot_at(self.path)
@@ -245,6 +247,9 @@ class RestartCooldownTests(unittest.TestCase):
         self.assertEqual(state.get("last_trade_candle_ts"), BASE)
         restored = bot_at(self.path, last_ts=BASE + 3 * BAR)
         restored._load_state()
+        self.assertEqual(restored._cooldown_status()["remaining_bars"], 9)
+        for offset in range(1, 4):
+            restored._process_closed_candle([BASE + offset * BAR, 100, 101, 99, 100, 1])
         self.assertEqual(restored._cooldown_status()["remaining_bars"], 6)
 
     def _open_trade(self, path, *args, **kwargs):

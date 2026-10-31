@@ -7,6 +7,7 @@
 import time
 import json
 import threading
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -15,6 +16,7 @@ import ccxt
 import numpy as np
 from loguru import logger
 
+from src.live.candle_history import checkpoint_candles, validate_history
 from src.live.alerts import LocalAlertManager
 from src.live.okx_account import OKXAccountReader, reconcile_account_state
 from src.live.order_executor import (
@@ -207,6 +209,9 @@ class ProductionBot:
         self._candles: list = []
         self._ohlcv = {"open": [], "high": [], "low": [], "close": [], "volume": []}
         self._indicators: dict = {}
+        self._history_restored = False
+        self._history_origin = "fresh_bootstrap"
+        self._processing_candle = False
 
         mode = "🧪纸上交易" if self.dry_run else ("🧪模拟盘" if testnet else "⚠️实盘")
         logger.info(f"🤖 TripleEma机器人: {symbol} {timeframe} {leverage}x {mode}")
@@ -237,18 +242,29 @@ class ProductionBot:
             "trade_log": self._trade_log,
             "strategy_open_log": self._strategy_open_log,
             "core_trade_log": self._core_trade_log,
+            **({"indicator_history": {"version": 1, "candles": self._candles}} if self._candles else {}),
+            "last_signal": self._last_signal,
+            "history_origin": self._history_origin,
             "updated_at": str(datetime.now(timezone.utc)),
         }
 
     def _save_state(self):
+        # A bar may rebalance spot and close/open a swap. Commit them together.
+        if self._processing_candle:
+            return
         try:
             self.state_file.parent.mkdir(parents=True, exist_ok=True)
             temporary = self.state_file.with_suffix(self.state_file.suffix + ".tmp")
             with open(temporary, "w") as f:
-                json.dump(self._state_payload(), f, indent=2, ensure_ascii=False, default=str)
+                json.dump(self._state_payload(), f, indent=2, ensure_ascii=False, default=str, allow_nan=False)
+                f.flush()
+                os.fsync(f.fileno())
             temporary.replace(self.state_file)
         except Exception as e:
-            logger.warning(f"保存状态失败: {e}")
+            self._paused_reason = "state_invalid:checkpoint_write_failed"
+            self._running = False
+            logger.warning(f"保存状态失败，停止处理: {e}")
+            raise
 
     def _load_state(self):
         if not self.state_file.exists():
@@ -264,6 +280,21 @@ class ProductionBot:
             if state.get("symbol") != self.symbol or state.get("timeframe") != self.timeframe:
                 logger.warning("状态文件交易对或周期不匹配，跳过恢复")
                 return
+            history = None
+            if "indicator_history" in state:
+                history = checkpoint_candles(
+                    state, self.exchange.parse_timeframe(self.timeframe) * 1000,
+                    self.exchange.milliseconds())
+                if len(history) < max(self.p_ema_t, 221):
+                    raise ValueError("indicator_history_warmup")
+            if history is not None:
+                self._set_history(history)
+                self._history_restored = True
+                self._history_origin = state.get("history_origin", "checkpoint")
+            else:
+                self._history_origin = "legacy_bootstrap"
+                logger.warning("旧状态没有指标历史；本次仅冷启动预热，不能恢复旧指标连续性")
+            self._last_signal = state.get("last_signal", self._last_signal)
             self._paper_cash = float(state.get("paper_cash", self._paper_cash))
             self._paper_core_btc = float(state.get("paper_core_btc", self._paper_core_btc))
             self._position = state.get("position")
@@ -336,6 +367,8 @@ class ProductionBot:
             "last_market_success_at": self._last_market_success_at,
             "last_closed_candle_ts": self._candles[-1][0] if self._candles else None,
             "cooldown": self._cooldown_status(), "signal": self._last_signal,
+            "history_origin": self._history_origin,
+            "history_bars": len(self._candles),
         }
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -634,7 +667,12 @@ class ProductionBot:
         candles = [c for c in candles if c[0] + interval_ms <= now_ms]
         if not candles:
             raise ValueError("没有已收盘K线可用于初始化")
-        self._candles = candles
+        validate_history(candles, interval_ms, now_ms)
+        self._set_history(candles)
+        logger.info(f"已加载 {len(candles)} 根历史K线")
+
+    def _set_history(self, candles):
+        self._candles = [list(row) for row in candles]
         self._ohlcv = {
             "open":   np.array([c[1] for c in candles], dtype=float),
             "high":   np.array([c[2] for c in candles], dtype=float),
@@ -643,9 +681,28 @@ class ProductionBot:
             "volume": np.array([c[5] for c in candles], dtype=float),
         }
         self._update_indicators()
-        logger.info(f"已加载 {len(candles)} 根历史K线")
 
     def _process_closed_candle(self, candle):
+        interval = self.exchange.parse_timeframe(self.timeframe) * 1000
+        validate_history([candle], interval, self.exchange.milliseconds())
+        if self._candles and candle[0] <= self._candles[-1][0]:
+            return
+        if self._candles and candle[0] != self._candles[-1][0] + interval:
+            self._paused_reason = "state_invalid:indicator_history_gap"
+            self._running = False
+            raise ValueError("indicator_history_gap: refusing to reset history")
+        self._processing_candle = True
+        try:
+            self._apply_closed_candle(candle)
+            self._processing_candle = False
+            self._save_state()
+        except Exception:
+            self._processing_candle = False
+            self._paused_reason = self._paused_reason or "state_invalid:candle_processing_failed"
+            self._running = False
+            raise
+
+    def _apply_closed_candle(self, candle):
         """每根已收盘K线只处理一次，指标和信号均使用最终 OHLCV。"""
         self._candles.append(candle)
         for i, key in enumerate(["open", "high", "low", "close", "volume"]):
@@ -1127,7 +1184,11 @@ class ProductionBot:
             return False
 
         # 日熔断检查
-        today = datetime.now(timezone.utc).day
+        decision_time = datetime.now(timezone.utc)
+        if self.dry_run and self._processing_candle:
+            interval = self.exchange.parse_timeframe(self.timeframe) * 1000
+            decision_time = datetime.fromtimestamp((self._candles[-1][0] + interval) / 1000, timezone.utc)
+        today = decision_time.day
         if today != self._last_trade_day:
             self._daily_pnl = 0.0
             self._last_trade_day = today
@@ -1328,8 +1389,12 @@ class ProductionBot:
         """启动机器人"""
         logger.info("🚀 启动 TripleEma 实盘机器人...")
 
-        self.load_history(500)
         self._load_state()
+        if self._paused_reason:
+            self._write_health()
+            return
+        if not self._history_restored:
+            self.load_history(500)
         self.set_leverage()
         if self._paused_reason:
             self._write_health()
@@ -1355,11 +1420,14 @@ class ProductionBot:
         logger.info(f"   牛熊: {'🐂牛市' if c > ind['ema200'][-1] else '🐻熊市'}")
         if self.dry_run:
             self._reconcile_live_state(float(c))
-        self._update_portfolio_plan()
+        # A durable checkpoint already contains the result of this close.
+        if not self._history_restored:
+            self._update_portfolio_plan()
+            self._save_state()
         self._write_account_snapshot(float(c))
         self._write_health()
 
-        # 启动时不重放历史收盘信号；等待下一根K线收盘后再评估。
+        # Resume after the committed close; paper mode replays downtime bars in order.
         last_candle_ts = self._candles[-1][0]
         ccxt_sym = self.symbol + ":USDT"
         interval_ms = self.exchange.parse_timeframe(self.timeframe) * 1000
@@ -1368,7 +1436,8 @@ class ProductionBot:
         while self._running:
             try:
                 # 获取最近K线。最后一根可能仍在形成，只处理已收盘部分。
-                candles = self._fetch_market_candles()
+                missing = max(0, (self.exchange.milliseconds() - last_candle_ts) // interval_ms)
+                candles = self._fetch_market_candles(limit=min(500, max(10, missing + 1)))
                 if not candles:
                     self._write_health()
                     time.sleep(60)
@@ -1377,11 +1446,14 @@ class ProductionBot:
                 closed = closed_candles_after(
                     candles, last_candle_ts, interval_ms, now_ms)
                 for candle in closed:
+                    if not self.dry_run and candle[0] + 2 * interval_ms <= now_ms:
+                        self._paused_reason = "state_invalid:exchange_catchup_required"
+                        self._running = False
+                        raise ValueError("exchange mode cannot replay historical orders")
                     if candle[0] - last_candle_ts > interval_ms:
-                        logger.warning("K线缺口超过轮询窗口，重新加载历史K线")
-                        self.load_history(500)
-                        last_candle_ts = self._candles[-1][0]
-                        break
+                        self._paused_reason = "state_invalid:indicator_history_gap"
+                        self._running = False
+                        raise ValueError("K线缺口超过轮询窗口；保留指标检查点并停止，不截短历史")
                     self._process_closed_candle(candle)
                     last_candle_ts = candle[0]
                 self._write_health()
@@ -1391,7 +1463,10 @@ class ProductionBot:
                 self.stop()
                 break
             except Exception as e:
-                self._record_api_failure("main_loop_error", e)
+                if self._running:
+                    self._record_api_failure("main_loop_error", e)
+                else:
+                    logger.error(f"停止处理并保留检查点: {e}")
                 self._write_health()
                 time.sleep(60)
 

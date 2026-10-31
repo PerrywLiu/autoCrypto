@@ -67,6 +67,7 @@ class ShadowBot(ProductionBot):
             cooldown_bars=s.get('cooldown_base',6),cooldown_extra_per_loss=s.get('cooldown_extra_per_loss',3),
             portfolio_config=load_portfolio_config(cfg.get('portfolio')))
         self.exchange=SimpleNamespace(parse_timeframe=lambda _:14400,
+            milliseconds=lambda:int(ReplayClock.current.timestamp()*1000),
             amount_to_precision=lambda _,x:str(x),price_to_precision=lambda _,x:str(x))
         self.account_reader=NoOrders();self.order_executor=NoOrders()
         self.candidate=candidate;self.sold_before=False;self.last_sell=None;self.events=[]

@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 import unittest
 import json
 import tempfile
@@ -153,7 +154,10 @@ class ProductionConfigTests(unittest.TestCase):
 
     def test_closed_candle_is_added_before_signal_evaluation(self):
         bot = ProductionBot.__new__(ProductionBot)
-        bot._candles = [[i, 100, 101, 99, 100, 1] for i in range(220)]
+        bot._candles = [[i*14400000, 100, 101, 99, 100, 1] for i in range(220)]
+        bot.timeframe = "4h"
+        bot.exchange = SimpleNamespace(parse_timeframe=lambda _:14400, milliseconds=lambda:221*14400000)
+        bot._save_state = lambda:None
         bot._ohlcv = {
             key: np.array([c[i] for c in bot._candles], dtype=float)
             for i, key in enumerate(("open", "high", "low", "close", "volume"), 1)
@@ -176,7 +180,7 @@ class ProductionConfigTests(unittest.TestCase):
         bot.evaluate = lambda: observed.append(bot._ohlcv["close"][-1]) or signal
         bot.execute_signal = lambda item: observed.append(item) or True
 
-        bot._process_closed_candle([220, 101, 103, 100, 102, 1])
+        bot._process_closed_candle([220*14400000, 101, 103, 100, 102, 1])
 
         self.assertEqual(observed, [102, signal])
         self.assertEqual(len(bot._candles), 221)

@@ -13,6 +13,7 @@ import time
 import yaml
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from src.live.shadow import ShadowExperiment, BAR
+from src.live.candle_history import checkpoint_candles
 
 # Public data and paper state only. Does not read credentials, write files remotely,
 # execute inside the trading container, or call any private trading endpoint.
@@ -22,8 +23,10 @@ root=Path('/root/work/autoCrypto')
 state_before=(root/'outputs/production_state.json').read_text()
 config=(root/'config/production.yaml').read_text()
 url='https://www.okx.com/api/v5/market/history-candles?instId=BTC-USDT-SWAP&bar=4H&limit=300'
-raw=json.loads(subprocess.check_output(['curl','-fsS','--max-time','20','-H','x-simulated-trading: 1',url]))
-assert raw['code']=='0',raw.get('msg')
+raw={'data':[]}
+if 'indicator_history' not in json.loads(state_before):
+    raw=json.loads(subprocess.check_output(['curl','-fsS','--max-time','20','-H','x-simulated-trading: 1',url]))
+    assert raw['code']=='0',raw.get('msg')
 health=json.loads((root/'outputs/production_health.json').read_text())
 assert state_before==(root/'outputs/production_state.json').read_text(), 'source state changed during capture; retry'
 print(json.dumps({'state':json.loads(state_before),'config_yaml':config,'health':health,'candles':raw['data'],'now_ms':int(time.time()*1000)}))
@@ -44,8 +47,12 @@ def source_packet(host, source_directory=None):
     for row in packet['candles']:
         candle=[int(row[0])]+[float(v) for v in row[1:6]]
         if row[-1]=='1' and candle[0]+BAR<=packet['now_ms']:candles.append(candle)
-    packet['mark_price']=float(max(packet['candles'],key=lambda r:int(r[0]))[4])
-    packet['candles']=sorted(candles,key=lambda c:c[0])
+    if 'indicator_history' in packet['state']:
+        packet['candles']=checkpoint_candles(packet['state'],BAR,packet['now_ms'])
+        packet['mark_price']=float(packet['candles'][-1][4])
+    else:
+        packet['mark_price']=float(max(packet['candles'],key=lambda r:int(r[0]))[4])
+        packet['candles']=sorted(candles,key=lambda c:c[0])
     h=packet['health'];stamp=datetime.fromisoformat(h['updated_at'])
     age=packet['now_ms']/1000-stamp.timestamp()
     if not h.get('running') or age>180 or age< -5 or h.get('paused_reason'):
@@ -53,6 +60,17 @@ def source_packet(host, source_directory=None):
     if not packet['candles'] or h['last_closed_candle_ts']!=packet['candles'][-1][0]:
         raise ValueError('等待源机器人与最新自然收盘对齐')
     return packet
+
+
+def validate_source_history(exp,packet):
+    """Do not mix a new indicator origin into an existing experiment."""
+    if 'indicator_history' not in packet['state']:
+        return False
+    source=checkpoint_candles(packet['state'],BAR,packet['now_ms'])
+    prefix=[c for c in source if c[0]<=exp.candles[-1][0]]
+    if prefix!=exp.candles:
+        raise ValueError('源指标历史与实验不同；保留原实验，须在新目录重验')
+    return True
 
 
 def export(exp,packet=None,error=None):
@@ -64,7 +82,12 @@ def export(exp,packet=None,error=None):
         checks['position']=(p is None and q is None) or (bool(p) and bool(q) and p['side']==q['side'] and all(abs(float(p.get(k,0))-float(q.get(k,0)))<1e-8 for k in ('entry','size','notional','sl','tp')))
         report['online_baseline_comparison']={'checks':checks,'matched':all(checks.values()),
             'note':'同一收盘下核对源账户；不一致仅标记，不覆盖或强行同步'}
-    report['comparison_validated']=bool(packet and report['online_baseline_comparison']['matched']) and not error
+    history_matched=False
+    if packet:
+        try:history_matched=validate_source_history(exp,packet)
+        except ValueError:pass
+    report['indicator_history_matched']=history_matched
+    report['comparison_validated']=bool(packet and report['online_baseline_comparison']['matched']) and history_matched and not error
     folder=exp.path.parent
     temp=folder/'shadow_status.tmp';temp.write_text(json.dumps(report,ensure_ascii=False,indent=2));temp.replace(folder/'shadow_status.json')
     lines=['# 4小时＋1%买回缓冲影子并跑','',f"检查时间：{report['checked_at']}。已处理自然收盘：{report['processed_candles']} 根。",'','|指标|现有规则基线|1%缓冲候选|','|---|---:|---:|']
@@ -99,6 +122,7 @@ def main():
                 exp=ShadowExperiment.load(db) if db.exists() else ShadowExperiment.create(db,cfg,packet['state'],packet['candles'],mark_price=packet['mark_price'])
             digest=hashlib.sha256(json.dumps(cfg,sort_keys=True).encode()).hexdigest()
             if digest!=exp.config_hash:raise ValueError('源配置改变：冻结实验，不混用新旧策略')
+            validate_source_history(exp,packet)
             exp.process(packet['candles'],packet['now_ms']);report=export(exp,packet)
             print(json.dumps({'checked_at':report['checked_at'],'processed':report['processed_candles'],'delta':report['candidate_minus_baseline'],'source_matched':report['online_baseline_comparison']['matched']},ensure_ascii=False),flush=True)
         except KeyboardInterrupt:break
